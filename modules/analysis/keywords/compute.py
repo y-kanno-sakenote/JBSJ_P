@@ -53,11 +53,13 @@ def get_global_df(df_all: pd.DataFrame) -> Dict[str, int]:
     return counts
 
 @st.cache_data(ttl=600, show_spinner=False)
-def keyword_tfidf(df_subset: pd.DataFrame, df_all: pd.DataFrame) -> pd.Series:
+def keyword_tfidf(df_subset: pd.DataFrame, df_all: pd.DataFrame, use_domain_stop: bool = False, power: float = 2.0) -> pd.Series:
     """
     TF-IDF に基づくキーワードの特徴度を計算する。
     TF: subset 内での出現論文数 (DF 方式を採用)
-    IDF: log( 全論文数 / (全論文での出現数 + 1) )
+    IDF: (log( 全論文数 / (全論文での出現数 + 1) ) + 1) ^ power
+    
+    use_domain_stop=True の場合、全体で非常に高頻度な語(例: DF > 5%)を抑制する。
     """
     if df_subset.empty: return pd.Series(dtype=float)
     
@@ -68,12 +70,23 @@ def keyword_tfidf(df_subset: pd.DataFrame, df_all: pd.DataFrame) -> pd.Series:
     global_df = get_global_df(df_all)
     n_total = len(df_all)
     
+    # ドメインストップワードの閾値 (全体論文の 5% 以上に出る語)
+    domain_stop_threshold = max(20, int(n_total * 0.05))
+    
     scores = {}
     for word, tf in tf_series.items():
-        # IDF の計算 (科学的に一般的な定義: log(N/df))
         df_global = global_df.get(word, 0)
-        # ラプラススムージング的に +1
-        idf = math.log(n_total / (df_global + 1)) + 1.0
+        
+        # ドメイン固有ストップワードの処理
+        if use_domain_stop and df_global > domain_stop_threshold:
+            continue
+            
+        # IDF の計算 (power で強調)
+        # log(N/df) は、df が N に近いほど 0 に近づく。
+        idf_base = math.log(n_total / (df_global + 1))
+        # 0.0 になると消えてしまうので +1.0 して底上げしつつ、power で累乗
+        idf = math.pow(idf_base + 1.0, power)
+        
         scores[word] = tf * idf
         
     res = pd.Series(scores, dtype=float).sort_values(ascending=False)

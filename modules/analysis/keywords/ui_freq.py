@@ -53,26 +53,51 @@ def render_freq_block(df_use: pd.DataFrame, df_all: pd.DataFrame | None = None) 
     with c2:
         min_total = st.number_input("最低総出現回数", min_value=1, max_value=100, value=3, step=1, key="kw_freq_min_total")
     with c3:
-        label = st.radio("カウント方式", ["登場論文数（DF）", "総出現回数（TF）", "特徴度（TF-IDF）"], index=0, horizontal=True, key="kw_freq_countmode")
-        if "DF" in label: mode = "df"
-        elif "TF-IDF" in label: mode = "tfidf"
-        else: mode = "tf"
+        # ラベルから確実に判定できるよう修正
+        label_options = ["登場論文数（DF）", "総出現回数（TF）", "特徴度（TF-IDF）"]
+        label = st.radio("カウント方式", label_options, index=0, horizontal=True, key="kw_freq_countmode")
+        
+        if "TF-IDF" in label:
+            mode = "tfidf"
+        elif "DF" in label:
+            mode = "df"
+        else:
+            mode = "tf"
 
-    if mode == "tfidf" and df_all is not None:
-        freq = keyword_tfidf(df_use, df_all)
-        value_label = "特徴スコア"
-        title_suffix = "（特徴度：TF-IDF）"
+    use_domain_stop = False
+    if mode == "tfidf":
+        # 追加オプション：ドメイン固有語の抑制
+        use_domain_stop = st.toggle("ドメイン固有語（醸造技術等）を自動抑制する", value=True, help="データベース全体で極めて頻繁に出現する語をキーワードから除外します。")
+
+    if mode == "tfidf":
+        if df_all is not None:
+            try:
+                # power=2.0 で特異度を強調
+                freq = keyword_tfidf(df_use, df_all, use_domain_stop=use_domain_stop, power=2.0)
+                value_label = "特徴スコア"
+                title_suffix = "（特徴度：TF-IDF）"
+            except Exception as e:
+                st.error(f"TF-IDF の計算中にエラーが発生しました: {e}")
+                freq = keyword_freq_by_mode(df_use, mode="df")
+                value_label = "件数"
+                title_suffix = "（登場論文数）"
+                mode = "df"
+        else:
+            st.warning("全文書データが見つからないため、TF-IDF を計算できません。")
+            freq = keyword_freq_by_mode(df_use, mode="df")
+            value_label = "件数"
+            title_suffix = "（登場論文数）"
+            mode = "df"
     else:
-        freq = keyword_freq_by_mode(df_use, mode=("df" if mode=="df" else "tf"))
+        freq = keyword_freq_by_mode(df_use, mode=mode)
         value_label = "件数"
         title_suffix = "（登場論文数）" if mode == "df" else "（出現回数）"
 
     if freq.empty:
         st.info("条件に合うキーワードが見つかりませんでした。"); return
         
-    # 特徴度（tfidf）の場合は出現回数での足切りを別途行う（スコアが低くても出現回数が多いものを除外したくない場合もあるが、ノイズ除去のため）
     if int(min_total) > 1:
-        # tfidf の場合でも、頻度ベースの series を取得してフィルタリング
+        # どのモードでも「出現論文数」で足切りを行う
         df_count = keyword_freq_by_mode(df_use, mode="df")
         freq = freq[freq.index.isin(df_count[df_count >= int(min_total)].index)]
 
@@ -91,7 +116,7 @@ def render_freq_block(df_use: pd.DataFrame, df_all: pd.DataFrame | None = None) 
             try:
                 df_chart = freq_df.sort_values(value_label, ascending=False).head(10)
                 df_plot = df_chart.sort_values(value_label, ascending=True)
-                fig = px.bar(df_plot, x=value_label, y="キーワード", orientation='h', text_auto='.2f' if mode=="tfidf" else True, title=f"キーワード分析（Top10）{title_suffix}")
+                fig = px.bar(df_plot, x=value_label, y="キーワード", orientation='h', text_auto='.2f' if mode=="tfidf" else True, title=f"分析（Top10）：{title_suffix}")
                 fig.update_layout(margin=dict(l=6, r=6, t=40, b=6), height=display_height, bargap=0.20, bargroupgap=0.06)
                 fig.update_yaxes(automargin=True)
                 fig.update_traces(marker_line_width=0)
@@ -109,14 +134,18 @@ def render_freq_block(df_use: pd.DataFrame, df_all: pd.DataFrame | None = None) 
             st.bar_chart(freq_df.set_index("キーワード")[value_label].sort_values(ascending=False).head(10))
 
     if mode == "tfidf":
-        st.info("💡 **特徴度 (TF-IDF)**: データベース全体で「ありふれた語」を抑制し、現在の検索結果に特有の単語を際立たせる指標です。")
+        msg = "💡 **特徴度 (TF-IDF)**: データベース全体の出現傾向と比較し、現在の抽出結果に固有の単語を際立たせています。"
+        if use_domain_stop:
+            msg += "（ドメイン固有の頻出語を自動的に抑制しています）"
+        st.info(msg)
 
     st.caption(_build_caption(df_use, topn, min_total, mode))
     copy_expander("📋 キーワードをすぐコピー", freq_df["キーワード"].astype(str).tolist())
 
     with st.expander("☁ WordCloud", expanded=False):
         if HAS_WC and st.button("生成する", key="kw_wc_btn"):
-            textfreq = {row["キーワード"]: int(row["件数"]) for _, row in freq_df.iterrows()}
+            # value_label を動的に参照するように修正
+            textfreq = {row["キーワード"]: float(row[value_label]) for _, row in freq_df.iterrows()}
             wc = WordCloud(width=900, height=450, background_color="white",
                            collocations=False, prefer_horizontal=1.0,
                            font_path=get_japanese_font_path() or None)
