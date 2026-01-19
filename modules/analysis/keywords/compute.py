@@ -1,5 +1,5 @@
-from __future__ import annotations
-from typing import List
+import math
+from typing import List, Dict
 import pandas as pd
 import streamlit as st
 from .base import split_multi
@@ -40,6 +40,44 @@ def keyword_freq_by_mode(df: pd.DataFrame, mode: str = "df") -> pd.Series:
         if not bags: return pd.Series(dtype=int)
         return pd.Series(bags, dtype="object").value_counts().sort_values(ascending=False)
     return keyword_freq(df)
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_global_df(df_all: pd.DataFrame) -> Dict[str, int]:
+    """全データベースにおける各単語の Document Frequency (出現論文数) を計算"""
+    counts: Dict[str, int] = {}
+    for _, r in df_all.iterrows():
+        # 同一論文内の重複を除いて集計
+        kws = set(_extract_keywords_from_row(r))
+        for k in kws:
+            counts[k] = counts.get(k, 0) + 1
+    return counts
+
+@st.cache_data(ttl=600, show_spinner=False)
+def keyword_tfidf(df_subset: pd.DataFrame, df_all: pd.DataFrame) -> pd.Series:
+    """
+    TF-IDF に基づくキーワードの特徴度を計算する。
+    TF: subset 内での出現論文数 (DF 方式を採用)
+    IDF: log( 全論文数 / (全論文での出現数 + 1) )
+    """
+    if df_subset.empty: return pd.Series(dtype=float)
+    
+    # Subset の統計 (TF)
+    tf_series = keyword_freq_by_mode(df_subset, mode="df")
+    
+    # 全文書の統計 (IDF用)
+    global_df = get_global_df(df_all)
+    n_total = len(df_all)
+    
+    scores = {}
+    for word, tf in tf_series.items():
+        # IDF の計算 (科学的に一般的な定義: log(N/df))
+        df_global = global_df.get(word, 0)
+        # ラプラススムージング的に +1
+        idf = math.log(n_total / (df_global + 1)) + 1.0
+        scores[word] = tf * idf
+        
+    res = pd.Series(scores, dtype=float).sort_values(ascending=False)
+    return res
 
 @st.cache_data(ttl=600, show_spinner=False)
 def yearly_keyword_counts(df: pd.DataFrame) -> pd.DataFrame:

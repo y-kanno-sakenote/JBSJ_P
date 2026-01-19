@@ -36,7 +36,7 @@ def render_keyword_tab(df: pd.DataFrame) -> None:
 
     tab1, tab2, tab3 = st.tabs(["① 頻出キーワード", "② 共起ネットワーク", "③ トレンド分析"])
     with tab1:
-        render_freq_block(df_use)
+        render_freq_block(df_use, df_all=df)
     with tab2:
         render_cooccur_block(df_use)
     with tab3:

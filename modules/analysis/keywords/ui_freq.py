@@ -14,15 +14,15 @@ try:
 except Exception:
     HAS_WC = False
 
-from .compute import keyword_freq_by_mode
+from .compute import keyword_freq_by_mode, keyword_tfidf
 from .images import get_japanese_font_path, safe_show_image
 from .base import short_preview, get_banner_filters
 from .copyui import expander as copy_expander
 
-def _freq_to_df(freq: pd.Series, topn: int) -> pd.DataFrame:
-    if freq.empty: return pd.DataFrame(columns=["キーワード","件数"])
+def _freq_to_df(freq: pd.Series, topn: int, value_label: str = "件数") -> pd.DataFrame:
+    if freq.empty: return pd.DataFrame(columns=["キーワード", value_label])
     df = freq.head(int(topn)).reset_index()
-    df.columns = ["キーワード","件数"]
+    df.columns = ["キーワード", value_label]
     return df
 
 def _build_caption(df_use: pd.DataFrame, topn: int, min_total: int, mode: str) -> str:
@@ -35,7 +35,7 @@ def _build_caption(df_use: pd.DataFrame, topn: int, min_total: int, mode: str) -
     parts = [
         f"条件：表示件数：{int(topn)}",
         f"最低回数≧{int(min_total)}",
-        "DF（登場論文数）" if mode=="df" else "TF（総出現回数）",
+        "DF（登場論文数）" if mode=="df" else "TF（総出現回数）" if mode=="tf" else "特徴度（TF-IDF）",
         f"期間：{period}",
     ]
     tg = short_preview(tg_sel or [])
@@ -46,80 +46,70 @@ def _build_caption(df_use: pd.DataFrame, topn: int, min_total: int, mode: str) -
         parts.append(f"研究タイプ：{tp}")
     return " ｜ ".join(parts)
 
-def render_freq_block(df_use: pd.DataFrame) -> None:
-    c1, c2, c3 = st.columns([1, 1, 1.6])
+def render_freq_block(df_use: pd.DataFrame, df_all: pd.DataFrame | None = None) -> None:
+    c1, c2, c3 = st.columns([1, 1, 2.0])
     with c1:
         topn = st.number_input("表示件数", min_value=5, max_value=100, value=30, step=5, key="kw_freq_topn")
     with c2:
         min_total = st.number_input("最低総出現回数", min_value=1, max_value=100, value=3, step=1, key="kw_freq_min_total")
     with c3:
-        label = st.radio("カウント方式", ["登場論文数（DF）", "総出現回数（TF）"], index=0, horizontal=True, key="kw_freq_countmode")
-        mode = "df" if "DF" in label else "tf"
+        label = st.radio("カウント方式", ["登場論文数（DF）", "総出現回数（TF）", "特徴度（TF-IDF）"], index=0, horizontal=True, key="kw_freq_countmode")
+        if "DF" in label: mode = "df"
+        elif "TF-IDF" in label: mode = "tfidf"
+        else: mode = "tf"
 
-    freq = keyword_freq_by_mode(df_use, mode=mode)
+    if mode == "tfidf" and df_all is not None:
+        freq = keyword_tfidf(df_use, df_all)
+        value_label = "特徴スコア"
+        title_suffix = "（特徴度：TF-IDF）"
+    else:
+        freq = keyword_freq_by_mode(df_use, mode=("df" if mode=="df" else "tf"))
+        value_label = "件数"
+        title_suffix = "（登場論文数）" if mode == "df" else "（出現回数）"
+
     if freq.empty:
         st.info("条件に合うキーワードが見つかりませんでした。"); return
+        
+    # 特徴度（tfidf）の場合は出現回数での足切りを別途行う（スコアが低くても出現回数が多いものを除外したくない場合もあるが、ノイズ除去のため）
     if int(min_total) > 1:
-        freq = freq[freq >= int(min_total)]
+        # tfidf の場合でも、頻度ベースの series を取得してフィルタリング
+        df_count = keyword_freq_by_mode(df_use, mode="df")
+        freq = freq[freq.index.isin(df_count[df_count >= int(min_total)].index)]
 
-    freq_df = _freq_to_df(freq, int(topn))
+    freq_df = _freq_to_df(freq, int(topn), value_label=value_label)
     if freq_df.empty:
         st.info("（フィルタで該当なし）条件を緩めてください。"); return
 
-    title_suffix = "（登場論文数）" if mode == "df" else "（出現回数）"
-
-    # 左に表、右にグラフ（研究者タブの論文数サブタブと同一レイアウトに合わせる）
+    # 左に表、右にグラフ
     left, right = st.columns([1.0, 1.1])
     display_height = 420
     with left:
-        # 表示用に上位 topn 件をそのまま表示
-        try:
-            st.dataframe(freq_df, use_container_width=True, hide_index=True, height=display_height)
-        except Exception:
-            st.dataframe(freq_df, use_container_width=True, hide_index=True)
-
-
+        st.dataframe(freq_df, use_container_width=True, hide_index=True, height=display_height)
 
     with right:
         if HAS_PX:
-            # グラフは常に Top10 のみ表示（左の表は topn に従う）
             try:
-                df_chart = freq_df.sort_values("件数", ascending=False).head(10)
-                # 横棒にする：件数を x、キーワードを y にして orientation='h'
-                df_plot = df_chart.sort_values("件数", ascending=True)
-                fig = px.bar(df_plot, x="件数", y="キーワード", orientation='h', text_auto=True, title=f"頻出キーワード（Top10）{title_suffix}")
-                # make bars visually thicker by reducing gap and removing border lines
-                # use same top margin as coauthor charts to match vertical alignment
+                df_chart = freq_df.sort_values(value_label, ascending=False).head(10)
+                df_plot = df_chart.sort_values(value_label, ascending=True)
+                fig = px.bar(df_plot, x=value_label, y="キーワード", orientation='h', text_auto='.2f' if mode=="tfidf" else True, title=f"キーワード分析（Top10）{title_suffix}")
                 fig.update_layout(margin=dict(l=6, r=6, t=40, b=6), height=display_height, bargap=0.20, bargroupgap=0.06)
                 fig.update_yaxes(automargin=True)
                 fig.update_traces(marker_line_width=0)
-                # Remove default xaxis title and instead place '件数' as a right-aligned annotation below the axis
                 fig.update_layout(xaxis_title="")
-                # place '件数' slightly above/right of the x-axis tick labels (paper coords)
                 fig.update_layout(annotations=[
                     dict(
-                        x=1.0,
-                        y=-0.02,
-                        xref='paper',
-                        yref='paper',
-                        text='件数',
-                        showarrow=False,
-                        xanchor='right',
-                        yanchor='bottom',
+                        x=1.0, y=-0.02, xref='paper', yref='paper',
+                        text=value_label, showarrow=False, xanchor='right', yanchor='bottom',
                     )
                 ])
                 st.plotly_chart(fig, use_container_width=True)
             except Exception:
-                # フォールバック: 元の縦棒表示（Top10）
-                df_chart = freq_df.sort_values("件数", ascending=False).head(10)
-                fig = px.bar(df_chart, x="キーワード", y="件数", text_auto=True, title=f"頻出キーワード（Top10）{title_suffix}")
-                fig.update_layout(margin=dict(l=6, r=6, t=40, b=6), height=display_height, bargap=0.20, bargroupgap=0.06)
-                fig.update_traces(marker_line_width=0)
-                st.plotly_chart(fig, use_container_width=True)
+                st.bar_chart(freq_df.set_index("キーワード")[value_label].sort_values(ascending=False).head(10))
         else:
-            # Plotly が無い場合は既存の streamlit 縦棒を表示
-            # show top10 in fallback as well (st.bar_chart doesn't accept height)
-            st.bar_chart(freq_df.set_index("キーワード")["件数"].sort_values(ascending=False).head(10))
+            st.bar_chart(freq_df.set_index("キーワード")[value_label].sort_values(ascending=False).head(10))
+
+    if mode == "tfidf":
+        st.info("💡 **特徴度 (TF-IDF)**: データベース全体で「ありふれた語」を抑制し、現在の検索結果に特有の単語を際立たせる指標です。")
 
     st.caption(_build_caption(df_use, topn, min_total, mode))
     copy_expander("📋 キーワードをすぐコピー", freq_df["キーワード"].astype(str).tolist())
