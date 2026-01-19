@@ -8,11 +8,11 @@ try:
 except Exception:
     HAS_PX = False
 
-from .compute import yearly_keyword_counts
+from .compute import yearly_keyword_counts, keyword_tfidf
 from .base import norm_key, short_preview, get_banner_filters
 from .copyui import expander as copy_expander
 
-def render_trend_block(df_use: pd.DataFrame) -> None:
+def render_trend_block(df_use: pd.DataFrame, df_all: pd.DataFrame | None = None) -> None:
     c1, c2, c3, c4, c5 = st.columns([1,1,1.6,1.6,1.2])
     with c1:
         topn = st.number_input("表示する語数（TopN）", min_value=5, max_value=50, value=15, step=5, key="kw_trend_topn")
@@ -25,11 +25,18 @@ def render_trend_block(df_use: pd.DataFrame) -> None:
     with c5:
         metric = st.radio("指標", ["件数","シェア(%)"], index=0, horizontal=True, key="kw_trend_metric")
 
-    yearly = yearly_keyword_counts(df_use)
+    # カウントモード（グローバル設定）
+    mode = st.session_state.get("kw_global_countmode", "df")
+    domain_stop = st.session_state.get("kw_global_domain_stop", False)
+
+    if mode == "tfidf":
+        yearly = None
+    else:
+        yearly = yearly_keyword_counts(df_use)
     include_list = [norm_key(x) for x in _split(include_raw)]
     exclude_list = [norm_key(x) for x in _split(exclude_raw)]
 
-    if not yearly.empty:
+    if mode != "tfidf" and not yearly.empty:
         if include_list:
             mask_inc = yearly["keyword"].astype(str).map(lambda v: any(n in norm_key(v) for n in include_list))
             yearly = yearly[mask_inc]
@@ -37,15 +44,43 @@ def render_trend_block(df_use: pd.DataFrame) -> None:
             mask_exc = yearly["keyword"].astype(str).map(lambda v: any(n in norm_key(v) for n in exclude_list))
             yearly = yearly[~mask_exc]
 
-    if yearly.empty:
+    if mode != "tfidf" and yearly.empty:
         st.info("データがありません。"); return
 
-    latest_year = yearly["発行年"].max()
-    latest_top = (yearly[yearly["発行年"] == latest_year].sort_values("count", ascending=False)["keyword"].head(int(topn)).tolist())
+    # TF-IDF モードでは各年ごとに keyword_tfidf を計算して時系列テーブルを作る
+    if mode == "tfidf":
+        if df_all is None:
+            st.warning("TF-IDF を計算するには全文書データが必要です。`df_all` を渡してください。")
+            return
+        # 年リストを決める
+        years = sorted(set([int(y) for y in pd.to_numeric(df_use.get("発行年", pd.Series([], dtype=object)), errors="coerce").dropna().astype(int).unique()]))
+        if not years:
+            st.info("発行年の情報がありません。"); return
+        # 最新年の上位語を TF-IDF で決定
+        df_latest = df_use[pd.to_numeric(df_use.get("発行年"), errors="coerce") == max(years)]
+        latest_tfidf = keyword_tfidf(df_latest, df_all, use_domain_stop=domain_stop, power=2.0)
+        latest_top = latest_tfidf.head(int(topn)).index.tolist()
 
-    piv = (yearly[yearly["keyword"].isin(latest_top)]
-           .pivot_table(index="発行年", columns="keyword", values="count", aggfunc="sum")
-           .fillna(0).sort_index())
+        # 各年ごとに TF-IDF を計算してピボットを作成
+        rows = []
+        for y in years:
+            df_y = df_use[pd.to_numeric(df_use.get("発行年"), errors="coerce") == int(y)]
+            tfidf_y = keyword_tfidf(df_y, df_all, use_domain_stop=domain_stop, power=2.0)
+            for kw in latest_top:
+                val = float(tfidf_y.get(kw, 0.0))
+                rows.append((int(y), kw, val))
+        if not rows:
+            st.info("データがありません。"); return
+        piv = pd.DataFrame(rows, columns=["発行年", "keyword", "score"])\
+                .pivot_table(index="発行年", columns="keyword", values="score", aggfunc="sum").fillna(0).sort_index()
+
+        y_label = "特徴度( TF-IDF )"
+    else:
+        latest_year = yearly["発行年"].max()
+        latest_top = (yearly[yearly["発行年"] == latest_year].sort_values("count", ascending=False)["keyword"].head(int(topn)).tolist())
+        piv = (yearly[yearly["keyword"].isin(latest_top)]
+               .pivot_table(index="発行年", columns="keyword", values="count", aggfunc="sum")
+               .fillna(0).sort_index())
 
     if metric.startswith("シェア"):
         row_sums = piv.sum(axis=1).replace(0, 1)
@@ -58,7 +93,11 @@ def render_trend_block(df_use: pd.DataFrame) -> None:
     if int(ma) > 1:
         piv = piv.rolling(window=int(ma), min_periods=1).mean()
 
-    y_label = "シェア(%)" if metric.startswith("シェア") else "件数"
+    if mode == "tfidf":
+        # TF-IDF モードではメトリクスはスコア固定（シェア変換は意味が薄い）
+        y_label = "特徴度( TF-IDF )"
+    else:
+        y_label = "シェア(%)" if metric.startswith("シェア") else "件数"
     if HAS_PX:
         fig = px.line(
             piv.reset_index().melt(id_vars="発行年", var_name="キーワード", value_name=y_label),

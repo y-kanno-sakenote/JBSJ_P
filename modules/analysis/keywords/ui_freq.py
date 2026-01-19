@@ -55,7 +55,15 @@ def render_freq_block(df_use: pd.DataFrame, df_all: pd.DataFrame | None = None) 
     with c3:
         # ラベルから確実に判定できるよう修正
         label_options = ["登場論文数（DF）", "総出現回数（TF）", "特徴度（TF-IDF）"]
-        label = st.radio("カウント方式", label_options, index=0, horizontal=True, key="kw_freq_countmode")
+        # グローバル設定があればデフォルトとして反映
+        global_mode = st.session_state.get("kw_global_countmode", "df")
+        if global_mode == "tfidf":
+            default_index = 2
+        elif global_mode == "tf":
+            default_index = 1
+        else:
+            default_index = 0
+        label = st.radio("カウント方式", label_options, index=default_index, horizontal=True, key="kw_freq_countmode")
         
         if "TF-IDF" in label:
             mode = "tfidf"

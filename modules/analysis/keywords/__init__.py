@@ -34,10 +34,32 @@ def render_keyword_tab(df: pd.DataFrame) -> None:
     y_to   = st.session_state.get("kw_year", [None, None])[1] if isinstance(st.session_state.get("kw_year"), (list, tuple)) else None
     render_provenance_banner_from_df(df_use, total_n=len(df), y_from=y_from, y_to=y_to)
 
+    # グローバルなカウント方式（タブ全体に適用可能）
+    col_a, col_b = st.columns([1.0, 2.0])
+    with col_a:
+        mode = st.radio("カウント方式（タブ全体）", ["登場論文数（DF）", "総出現回数（TF）", "特徴度（TF-IDF）"], index=0, horizontal=True, key="kw_global_countmode_label")
+        # セッションステートには短縮コードを保存（'df'|'tf'|'tfidf'）
+        if "TF-IDF" in mode:
+            st.session_state["kw_global_countmode"] = "tfidf"
+        elif "DF" in mode:
+            st.session_state["kw_global_countmode"] = "df"
+        else:
+            st.session_state["kw_global_countmode"] = "tf"
+    with col_b:
+        # TF-IDF 選択時に有効となるドメイン固有語抑制トグル
+        # Widget の戻り値を直接使い、session_state へはキー名だけを渡す（Streamlit が管理）
+        if st.session_state.get("kw_global_countmode") == "tfidf":
+            domain_stop_val = st.checkbox("ドメイン固有語を自動抑制する（TF-IDF）", value=True, key="kw_global_domain_stop")
+            # 値は必要に応じて参照するため session_state に残る（Streamlit が自動で設定します）
+        else:
+            # tfidf でない場合はウィジェットを出さず、既存の値を保持または False をセット
+            if "kw_global_domain_stop" not in st.session_state:
+                st.session_state["kw_global_domain_stop"] = False
+
     tab1, tab2, tab3 = st.tabs(["① 頻出キーワード", "② 共起ネットワーク", "③ トレンド分析"])
     with tab1:
         render_freq_block(df_use, df_all=df)
     with tab2:
-        render_cooccur_block(df_use)
+        render_cooccur_block(df_use, df_all=df)
     with tab3:
-        render_trend_block(df_use)
+        render_trend_block(df_use, df_all=df)

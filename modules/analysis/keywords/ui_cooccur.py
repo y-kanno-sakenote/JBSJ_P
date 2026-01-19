@@ -2,11 +2,11 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 from .base import norm_key, short_preview, PALETTE, get_banner_filters
-from .compute import build_keyword_cooccur_edges
+from .compute import build_keyword_cooccur_edges, keyword_tfidf
 from .network import compute_node_communities_from_edges, draw_pyvis_from_edges
 from .copyui import expander as copy_expander
 
-def render_cooccur_block(df_use: pd.DataFrame) -> None:
+def render_cooccur_block(df_use: pd.DataFrame, df_all: pd.DataFrame | None = None) -> None:
     c1, c2, c3, c4, c5 = st.columns([1,1,1.6,1.6,0.9])
     with c2:
         min_edge = st.number_input("最低共起数（同時出現）", min_value=1, max_value=50, value=3, step=1, key="kw_co_minw")
@@ -23,7 +23,22 @@ def render_cooccur_block(df_use: pd.DataFrame) -> None:
     include_list = [norm_key(x) for x in _split(include_raw)]
     exclude_list = [norm_key(x) for x in _split(exclude_raw)]
 
+    # カウントモード（グローバル設定）
+    mode = st.session_state.get("kw_global_countmode", "df")
+    domain_stop = st.session_state.get("kw_global_domain_stop", False)
+
     edges = build_keyword_cooccur_edges(df_use, int(min_edge))
+
+    # モードが TF-IDF の場合、ノードの重要度は TF-IDF スコアに基づいて上位 topN を選ぶ。
+    if mode == "tfidf" and df_all is not None and not edges.empty:
+        try:
+            tfidf_series = keyword_tfidf(df_use, df_all, use_domain_stop=domain_stop, power=2.0)
+            top_nodes = set(tfidf_series.head(int(topN)).index.tolist())
+            # top_nodes に含まれるノードのみを残す
+            if top_nodes:
+                edges = edges[edges["src"].isin(top_nodes) & edges["dst"].isin(top_nodes)].reset_index(drop=True)
+        except Exception as _e:
+            st.info(f"共起ネットワークで TF-IDF を適用できませんでした: {_e}")
     if not edges.empty and (include_list or exclude_list):
         def _contains_any(name: str, needles: list[str]) -> bool:
             s = norm_key(name)
