@@ -1,0 +1,2 @@
+Key: AIzaSyBlIyc4zjvq3pQrzQvPr1rh_nvFVhbxk7I
+Model: gemini-3-flash-preview
