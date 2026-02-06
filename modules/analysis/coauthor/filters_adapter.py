@@ -87,9 +87,10 @@ def adapt_filter_bar(df: pd.DataFrame):
 
     if isinstance(res, dict):
         y_from, y_to = res.get("year", year_min_max(df))
+        genre_sel = res.get("genre", [])
         tg_sel = res.get("targets", [])
         tp_sel = res.get("types", [])
-        return apply_filters_basic(df, int(y_from), int(y_to), list(tg_sel), list(tp_sel)), int(y_from), int(y_to), list(tg_sel), list(tp_sel)
+        return apply_filters_basic(df, int(y_from), int(y_to), list(genre_sel), list(tg_sel), list(tp_sel)), int(y_from), int(y_to), list(genre_sel), list(tg_sel), list(tp_sel)
 
     if isinstance(res, pd.DataFrame):
         df_use = res
@@ -101,10 +102,10 @@ def adapt_filter_bar(df: pd.DataFrame):
                 y_from, y_to = year_min_max(df)
         else:
             y_from, y_to = year_min_max(df)
-        return df_use, y_from, y_to, [], []
+        return df_use, y_from, y_to, [], [], []
 
     y_from, y_to = year_min_max(df)
-    return df, y_from, y_to, [], []
+    return df, y_from, y_to, [], [], []
 
 def augment_with_session_state(y_from: int, y_to: int, tg_sel: list[str], tp_sel: list[str], key_prefix="authors"):
     try:
@@ -129,13 +130,18 @@ def augment_with_session_state(y_from: int, y_to: int, tg_sel: list[str], tp_sel
         return y_from, y_to, tg_sel, tp_sel
 
 @st.cache_data(ttl=600, show_spinner=False)
-def apply_filters_basic(df: pd.DataFrame, y_from: int, y_to: int, targets: List[str], types: List[str]) -> pd.DataFrame:
+def apply_filters_basic(df: pd.DataFrame, y_from: int, y_to: int, genres: List[str], targets: List[str], types: List[str]) -> pd.DataFrame:
     use = df.copy()
     if "発行年" in use.columns:
         y = pd.to_numeric(use["発行年"], errors="coerce")
         use = use[(y >= y_from) & (y <= y_to) | y.isna()]
-    if targets and "対象物_top3" in use.columns:
-        use = use[col_contains_any(use["対象物_top3"], targets)]
-    if types and "研究タイプ_top3" in use.columns:
-        use = use[col_contains_any(use["研究タイプ_top3"], types)]
+    has_wider = all(c in use.columns for c in ["target_pairs_top5", "research_pairs_top5"])
+    if has_wider:
+        from modules.common.filters import apply_hierarchical_filters
+        use = apply_hierarchical_filters(use, genre_sel=genres, t_l1_sel=targets, t_l2_sel=targets, r_l1_sel=types, r_l2_sel=types)
+    else:
+        if targets and "対象物_top3" in use.columns:
+            use = use[col_contains_any(use["対象物_top3"], targets)]
+        if types and "研究タイプ_top3" in use.columns:
+            use = use[col_contains_any(use["研究タイプ_top3"], types)]
     return use

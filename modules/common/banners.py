@@ -9,23 +9,29 @@ def render_provenance(df_use: pd.DataFrame, total_n: int, gf: GlobalFilters):
         n_filtered = len(df_use) if df_use is not None else 0
         period = f"{gf.year_from}–{gf.year_to}" if gf.year_from and gf.year_to else "—"
         parts = [f"出典：JBSJ DB（N={n_filtered} / {total_n}）", f"期間：{period}"]
+        if hasattr(gf, "genre_sel") and gf.genre_sel:
+            g_txt = ", ".join(gf.genre_sel[:6]) + (" …" if len(gf.genre_sel) > 6 else "")
+            parts.append(f"ジャンル：{g_txt}")
         if gf.targets:
             tg_txt = ", ".join(gf.targets[:6]) + (" …" if len(gf.targets) > 6 else "")
             parts.append(f"対象物：{tg_txt}")
         if gf.types:
             tp_txt = ", ".join(gf.types[:6]) + (" …" if len(gf.types) > 6 else "")
-            parts.append(f"研究タイプ：{tp_txt}")
+            parts.append(f"研究分野：{tp_txt}")
         st.caption(" ｜ ".join(parts))
     except Exception:
         st.caption(f"出典：JBSJ DB（N={len(df_use) if df_use is not None else 0} / {total_n}）")
 
 def summarize(gf: GlobalFilters) -> str:
-    """条件サマリー文字列（期間・対象物・研究タイプ）"""
+    """条件サマリー文字列（期間・ジャンル・対象物・研究タイプ）"""
     parts = [f"期間：{gf.year_from}–{gf.year_to}"]
+    if hasattr(gf, "genre_sel") and gf.genre_sel:
+        head = ", ".join(gf.genre_sel[:3]) + (" …" if len(gf.genre_sel) > 3 else "")
+        parts.append(f"ジャンル：{head}")
     if gf.targets:
         head = ", ".join(gf.targets[:3]) + (" …" if len(gf.targets) > 3 else "")
         parts.append(f"対象物：{head}")
     if gf.types:
         head = ", ".join(gf.types[:3]) + (" …" if len(gf.types) > 3 else "")
-        parts.append(f"研究タイプ：{head}")
+        parts.append(f"研究分野：{head}")
     return " ｜ ".join(parts)

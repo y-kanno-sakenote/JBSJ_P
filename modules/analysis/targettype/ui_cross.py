@@ -9,70 +9,95 @@ try:
 except Exception:
     HAS_PX = False
 
-from .compute import cross_counts, ordered_index_and_columns
+from .compute import cross_counts, cross_counts_hierarchical
 from .base import TARGET_ORDER, TYPE_ORDER
 from .filters import summary_global_filters
 
 def render_cross_block(df: pd.DataFrame, y_from: int, y_to: int, tg_sel: list[str], tp_sel: list[str]) -> None:
-    st.markdown('<div style="font-weight=600; font-size:1.1rem; margin:0 0 0.25rem;">対象物 × 研究タイプ（クロスヒートマップ）</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-weight=600; font-size:1.1rem; margin:0 0 0.25rem;">対象領域 × 研究分野（クロスヒートマップ）</div>', unsafe_allow_html=True)
+    
+    has_wider = "target_pairs_top5" in df.columns and "research_pairs_top5" in df.columns
+    cross = pd.DataFrame()
+    x_label, y_label = "", ""
 
-    cross = cross_counts(df, "対象物_top3", "研究タイプ_top3")
+    if has_wider:
+        # --- 新UI: 軸の選択 ---
+        c_opt1, c_opt2 = st.columns(2)
+        with c_opt1:
+            t_level = st.radio("縦軸（対象）の粒度", ["L1（領域）", "L2（対象物）"], horizontal=True, index=0, key="cross_t_level")
+        with c_opt2:
+            r_level = st.radio("横軸（分野）の粒度", ["L1（分野）", "L2（テーマ）"], horizontal=True, index=0, key="cross_r_level")
+        
+        t_lvl_code = "L1" if "L1" in t_level else "L2"
+        r_lvl_code = "L1" if "L1" in r_level else "L2"
+        
+        x_label = f"研究: {r_level}"
+        y_label = f"対象: {t_level}"
+        
+        # 集計
+        cross = cross_counts_hierarchical(df, "target_pairs_top5", t_lvl_code, "research_pairs_top5", r_lvl_code)
+        
+    else:
+        # --- 旧UI (フォールバック) ---
+        x_label = "研究分野"
+        y_label = "対象物"
+        cross = cross_counts(df, "対象物_top3", "研究タイプ_top3")
+
     if cross.empty:
         st.info("クロス集計できるデータがありません。")
         return
 
-    piv = cross.pivot(index="B", columns="A", values="count").fillna(0).astype(int)
-    piv.index.name = "研究タイプ"
-    piv.columns.name = "対象物"
-
-    idx_order, cols_order = ordered_index_and_columns(piv, TARGET_ORDER, TYPE_ORDER)
-    piv = piv.reindex(index=idx_order, columns=cols_order)
+    # Pivot: A=縦(Target), B=横(Research) を想定していたが、compute側は A, B なので
+    # cross_counts_hierarchical は A=Target, B=Research として返している想定
+    # cross columns: A, B, count
+    piv = cross.pivot(index="A", columns="B", values="count").fillna(0).astype(int)
+    piv.index.name = y_label
+    piv.columns.name = x_label
+    
+    # 並び順の制御（レガシーデータの場合のみ既存のORDERを適用、新データは件数順）
+    if not has_wider:
+        idx_order = [x for x in TARGET_ORDER if x in piv.index] + sorted([x for x in piv.index if x not in TARGET_ORDER])
+        cols_order = [x for x in TYPE_ORDER if x in piv.columns] + sorted([x for x in piv.columns if x not in TYPE_ORDER])
+        piv = piv.reindex(index=idx_order, columns=cols_order)
+    else:
+        # 件数が多い順に並べ替え（index, columnsともに）
+        # 行の合計
+        row_sums = piv.sum(axis=1).sort_values(ascending=False)
+        col_sums = piv.sum(axis=0).sort_values(ascending=False)
+        piv = piv.reindex(index=row_sums.index, columns=col_sums.index)
 
     show_values = bool(st.session_state.get("obj_cross_show_values", False))
 
     if HAS_PX:
         fig = px.imshow(piv, aspect="auto", color_continuous_scale="Blues", labels=dict(color="件数"))
-        fig.update_xaxes(categoryorder="array", categoryarray=cols_order, tickangle=45, automargin=True)
-        fig.update_yaxes(categoryorder="array", categoryarray=idx_order, automargin=True)
+        fig.update_xaxes(tickangle=45, automargin=True)
+        fig.update_yaxes(automargin=True)
+        
+        # ホバーテンプレート
+        fig.update_traces(hovertemplate=f"{y_label}=%{{y}}<br>{x_label}=%{{x}}<br>件数=%{{z}}<extra></extra>")
         if show_values:
-            try:
-                fig.update_traces(text=piv.values, texttemplate="%{text}", hovertemplate="研究タイプ=%{y}<br>対象物=%{x}<br>件数=%{z}<extra></extra>")
-            except Exception:
-                fig.update_traces(hovertemplate="研究タイプ=%{y}<br>対象物=%{x}<br>件数=%{z}<extra></extra>")
-        else:
-            fig.update_traces(hovertemplate="研究タイプ=%{y}<br>対象物=%{x}<br>件数=%{z}<extra></extra>")
-        fig.update_layout(height=560, margin=dict(l=10, r=10, t=30, b=10), coloraxis_colorbar_title="件数")
+            fig.update_traces(text=piv.values, texttemplate="%{text}")
+            
+        fig.update_layout(height=600, margin=dict(l=10, r=10, t=30, b=10), coloraxis_colorbar_title="件数")
         st.plotly_chart(fig, use_container_width=True)
+        
         rb_spacer, rb_cb = st.columns([6, 1])
         with rb_cb:
-            st.checkbox("セルの値を表示", value=show_values, key="obj_cross_show_values", help="ヒートマップの各セルに件数を直接表示します。")
+            st.checkbox("セルの値を表示", value=show_values, key="obj_cross_show_values")
     else:
         st.dataframe(piv, use_container_width=True)
-        rb_spacer, rb_cb = st.columns([6, 1])
-        with rb_cb:
-            st.checkbox("セルの値を表示", value=show_values, key="obj_cross_show_values", help="ヒートマップの各セルに件数を直接表示します。")
 
-    st.caption("条件：" + ("セル値表示：ON ｜ " if bool(st.session_state.get("obj_cross_show_values", False)) else "セル値表示：OFF ｜ ") + summary_global_filters(y_from, y_to, tg_sel, tp_sel))
+    st.caption("条件：" + summary_global_filters(y_from, y_to, tg_sel, tp_sel))
 
-    # 折り畳み式の表（ヒートマップに対応）を条件表示の下に付ける
-    with st.expander("📋 ヒートマップ表を表示（対象物×研究タイプ）", expanded=False):
+    with st.expander("📋 ヒートマップ表データを表示", expanded=False):
         try:
-            # 表示は pivot 形式（研究タイプ × 対象物）
-            st.dataframe(piv, use_container_width=True, hide_index=False)
+            st.dataframe(piv, use_container_width=True)
             st.download_button(
                 "📥 表をCSVで保存",
                 data=piv.reset_index().to_csv(index=False).encode("utf-8"),
                 file_name="cross_heatmap_table.csv",
                 mime="text/csv",
                 key="dl_cross_piv_csv",
-            )
-            # 生データ（cross）も欲しい場合のために原始行形式のダウンロード
-            st.download_button(
-                "📥 生データをCSVで保存（行形式）",
-                data=cross.to_csv(index=False).encode("utf-8"),
-                file_name="cross_counts_raw.csv",
-                mime="text/csv",
-                key="dl_cross_raw_csv",
             )
         except Exception as _e:
             st.caption(f"表の表示に失敗しました: {_e!s}")

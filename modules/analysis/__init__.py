@@ -14,7 +14,7 @@ def render_analysis_tab(df: pd.DataFrame, use_disk_cache: bool = False) -> None:
     tab1, tab2, tab3 = st.tabs([
         "👨‍🔬 研究者",
         "💬 キーワード",
-        "🧬 対象物・研究タイプ",
+        "🧬 対象物・研究分野",
     ])
 
     with tab1:

@@ -15,9 +15,11 @@ try:
 except Exception:
     HAS_PYVIS = False
 
-from .compute import build_cooccur_edges, example_titles_for_edge
+from .compute import build_cooccur_edges, example_titles_for_edge, build_cooccur_edges_hierarchical, example_titles_for_edge_hierarchical
 from .base import node_options_for_mode
-from .filters import summary_global_filters
+from .filters import summary_global_filters, parse_taxonomy_pairs
+
+# ... (Helper functions remain unchanged) ...
 
 def _color_square_data_uri(color_hex: str, size_px: int = 12) -> str:
     color = str(color_hex or "#999999"); size = max(6, int(size_px))
@@ -109,21 +111,68 @@ def _draw_pyvis_from_edges(edges: pd.DataFrame, height_px: int = 680, fixed_layo
     if footer_caption: st.caption(footer_caption)
     st.download_button("📥 ネットワークHTML", data=html.encode("utf-8"), file_name="cooccurrence_network.html", mime="text/html", key="dl_pyvis_html")
 
+def _get_l2_nodes(df: pd.DataFrame, col: str) -> list[str]:
+    nodes = set()
+    for v in df[col].fillna(""):
+        for p in parse_taxonomy_pairs(v):
+            if p[1]: nodes.add(p[1])
+    return sorted(list(nodes))
+
 def render_cooccurrence_block(df_use: pd.DataFrame, y_from: int, y_to: int, tg_sel: list[str], tp_sel: list[str]) -> None:
-    c1, c2, c3, c4, c5 = st.columns([1.2, 1.2, 1.0, 1.6, 1.6])
+    has_wider = "target_pairs_top5" in df_use.columns and "research_pairs_top5" in df_use.columns
+    
+    c1, c2, c3, c4, c5 = st.columns([1.5, 1.2, 1.0, 1.6, 1.6])
+    
+    mode_map = {}
+    if has_wider:
+        mode_map = {
+            "対象物(L2)のみ": "Target L2 Only",
+            "研究分野(L2)のみ": "Research L2 Only",
+            "対象物(L2)×具体的なテーマ(L2)": "Target L2 x Research L2"
+        }
+    else:
+        # Legacy
+        mode_map = {
+            "対象物のみ": "対象物のみ",
+            "研究分野のみ": "研究タイプのみ",
+            "対象物×研究分野": "対象物×研究タイプ"
+        }
+        
     with c1:
-        mode = st.selectbox("ネットワークの種類", ["対象物のみ", "研究タイプのみ", "対象物×研究タイプ"], index=0, key="obj_net_mode")
+        mode_label = st.selectbox("ネットワークの種類", list(mode_map.keys()), index=0, key="obj_net_mode")
+        mode_val = mode_map[mode_label]
+        
+    # ノード候補の取得
+    node_options = []
+    if has_wider:
+        if mode_val == "Target L2 Only":
+            node_options = _get_l2_nodes(df_use, "target_pairs_top5")
+        elif mode_val == "Research L2 Only":
+            node_options = _get_l2_nodes(df_use, "research_pairs_top5")
+        else:
+            n1 = _get_l2_nodes(df_use, "target_pairs_top5")
+            n2 = _get_l2_nodes(df_use, "research_pairs_top5")
+            node_options = sorted(list(set(n1 + n2)))
+    else:
+        node_options = node_options_for_mode(df_use, mode_val)
+
     with c2:
         topN = st.number_input("表示するノード数（多い順）", min_value=30, max_value=300, value=120, step=10, key="obj_net_topn")
     with c3:
         min_edge = st.number_input("最低共起数（同時出現）", min_value=1, max_value=50, value=3, step=1, key="obj_net_minw")
-    node_options = node_options_for_mode(df_use, mode)
+        
     with c4:
         include_terms = st.multiselect("必須（選択式）", options=node_options, default=[], key="obj_net_include_sel")
     with c5:
         exclude_terms = st.multiselect("除外（選択式）", options=node_options, default=[], key="obj_net_exclude_sel")
 
-    edges = build_cooccur_edges(df_use, mode, int(min_edge))
+    # エッジ構築
+    edges = pd.DataFrame()
+    if has_wider:
+         edges = build_cooccur_edges_hierarchical(df_use, mode_val, int(min_edge))
+    else:
+         edges = build_cooccur_edges(df_use, mode_val, int(min_edge))
+
     if not edges.empty and (include_terms or exclude_terms):
         e = edges.copy()
         if include_terms:
@@ -143,8 +192,16 @@ def render_cooccurrence_block(df_use: pd.DataFrame, y_from: int, y_to: int, tg_s
         ca, cb = comm_id.get(a, 0), comm_id.get(b, 0)
         c_use = ca if ca == cb else ca
         edge_clusters.append(c_use)
+        
         edge_colors.append(palette.get(c_use, "#999999"))
-        ex_titles.append(" / ".join(example_titles_for_edge(df_use, mode, a, b, limit=3)))
+        
+        # タイトル例取得
+        titles = []
+        if has_wider:
+            titles = example_titles_for_edge_hierarchical(df_use, mode_val, a, b, limit=3)
+        else:
+            titles = example_titles_for_edge(df_use, mode_val, a, b, limit=3)
+        ex_titles.append(" / ".join(titles))
 
     edges = edges.copy()
     edges["cluster_id"] = edge_clusters
@@ -154,17 +211,17 @@ def render_cooccurrence_block(df_use: pd.DataFrame, y_from: int, y_to: int, tg_s
     st.caption(f"エッジ数: {len(edges)}")
 
     _cond = ("条件："
-             + f"ネットワーク：{mode} ｜ 表示するノード数：{int(topN)} ｜ 最低共起数≧{int(min_edge)} ｜ "
+             + f"ネットワーク：{mode_label} ｜ 表示するノード数：{int(topN)} ｜ 最低共起数≧{int(min_edge)} ｜ "
              + (f"必須：{len(include_terms)}件 ｜ " if include_terms else "必須：0件 ｜ ")
              + (f"除外：{len(exclude_terms)}件 ｜ " if exclude_terms else "除外：0件 ｜ ")
              + summary_global_filters(y_from, y_to, tg_sel, tp_sel))
 
-    if mode == "対象物のみ":
+    if mode_val in ("対象物のみ", "Target L2 Only"):
         col_a, col_b = "対象物A", "対象物B"
-    elif mode == "研究タイプのみ":
-        col_a, col_b = "研究タイプA", "研究タイプB"
+    elif mode_val in ("研究タイプのみ", "Research L2 Only"):
+        col_a, col_b = "具体的なテーマA", "具体的なテーマB"
     else:
-        col_a, col_b = "対象物", "研究タイプ"
+        col_a, col_b = "対象物", "具体的なテーマ"
 
     disp = edges.rename(columns={"src": col_a, "dst": col_b, "weight": "共起回数"}).copy()
     disp["cluster_img"] = disp["cluster_color"].map(lambda c: _color_square_data_uri(c, 12))
@@ -195,7 +252,7 @@ def render_cooccurrence_block(df_use: pd.DataFrame, y_from: int, y_to: int, tg_s
                     node_colors[str(r["src"])] = r.get("cluster_color", "#999999")
                     node_colors[str(r["dst"])] = r.get("cluster_color", "#999999")
                 _foot = ("条件："
-                         + f"ネットワーク：{mode} ｜ 表示するノード数：{int(topN)} ｜ 最低共起数≧{int(min_edge)} ｜ "
+                         + f"ネットワーク：{mode_label} ｜ 表示するノード数：{int(topN)} ｜ 最低共起数≧{int(min_edge)} ｜ "
                          + (f"必須：{len(include_terms)}件 ｜ " if include_terms else "必須：0件 ｜ ")
                          + (f"除外：{len(exclude_terms)}件 ｜ " if exclude_terms else "除外：0件 ｜ ")
                          + summary_global_filters(y_from, y_to, tg_sel, tp_sel))

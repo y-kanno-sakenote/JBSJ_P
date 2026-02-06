@@ -13,8 +13,8 @@ def render_targettype_tab(df: pd.DataFrame) -> None:
     st.markdown(
         """
         <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap;">
-          <h2 style="margin:0;">🧬 対象物・研究タイプ分析</h2>
-          <span style="opacity:0.8;">対象物・研究タイプの分布・クロス集計・共起ネットワーク・トレンドを確認できます。</span>
+          <h2 style="margin:0;">🧬 対象物・研究分野分析</h2>
+          <span style="opacity:0.8;">対象物・研究分野の分布・クロス集計・共起ネットワーク・トレンドを確認できます。</span>
         </div>
         """,
         unsafe_allow_html=True,

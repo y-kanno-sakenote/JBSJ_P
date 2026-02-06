@@ -10,7 +10,7 @@ TARGET_ORDER = [
 TYPE_ORDER = [
     "微生物・遺伝子関連","醸造工程・製造技術","応用利用・食品開発","成分分析・物性評価",
     "品質評価・官能評価","歴史・文化・経済","健康機能・栄養効果","統計解析・モデル化",
-    "環境・サステナビリティ","保存・安定性","その他（研究タイプ）"
+    "環境・サステナビリティ","保存・安定性","その他（研究分野）"
 ]
 
 _HAS_COMMON_FILTERS = False
@@ -57,7 +57,7 @@ def _selected_filters(prefix: str = "kw") -> tuple[list[str], list[str]]:
         for k in [
             "types","types_sel","selected_types","types_labels",
             f"{prefix}_types", f"{prefix}_types_sel", f"{prefix}_selected_types",
-            "研究タイプ", f"{prefix}_研究タイプ",
+            "研究分野", f"{prefix}_研究分野",
         ]:
             if k in meta and not types:
                 types = _as_list(meta.get(k))
@@ -74,7 +74,7 @@ def _selected_filters(prefix: str = "kw") -> tuple[list[str], list[str]]:
                         vals = _as_list(ss.get(k)); 
                         if vals: targets = vals; break
             if not types:
-                for k in [f"{prefix}_types", f"{prefix}_研究タイプ", f"{prefix}_tp", f"{prefix}_selected_types", "types", "研究タイプ"]:
+                for k in [f"{prefix}_types", f"{prefix}_研究分野", f"{prefix}_tp", f"{prefix}_selected_types", "types", "研究分野"]:
                     if k in ss:
                         vals = _as_list(ss.get(k)); 
                         if vals: types = vals; break
@@ -92,6 +92,8 @@ def _df_from_result(res, fallback_df: pd.DataFrame) -> pd.DataFrame:
             if isinstance(v, pd.DataFrame): return v
     return fallback_df
 
+from modules.common.filters import apply_hierarchical_filters
+
 def safe_filter_bar(df: pd.DataFrame, key_prefix="kw", target_order=None, type_order=None) -> pd.DataFrame:
     global _LAST_FILTER_META
     if not _HAS_COMMON_FILTERS or _rfb is None:
@@ -106,7 +108,13 @@ def safe_filter_bar(df: pd.DataFrame, key_prefix="kw", target_order=None, type_o
     except Exception as e:
         st.warning(f"共通フィルターで例外: {type(e).__name__}: {e}", icon="⚠️")
         return df
+    
     _LAST_FILTER_META = res if isinstance(res, dict) else {}
+    
+    # フィルタ適用済み DF を取得
+    if isinstance(res, dict) and "df" in res:
+        return res["df"]
+    
     return _df_from_result(res, df)
 
 def _fmt_list(name: str, vals: list[str] | None, max_items: int = 6):
@@ -134,7 +142,7 @@ def render_provenance_banner_from_df(df_use: pd.DataFrame, total_n: int, y_from:
                     if (df_use is not None and "発行年" in df_use.columns) else pd.Series([], dtype=int)
             period = "—" if years.empty else f"{int(years.min())}–{int(years.max())}"
         parts = [f"出典：JBSJ DB（N={n_filtered} / {total_n}）", f"期間：{period}"]
-        t1 = _fmt_list("対象物", tg_sel); t2 = _fmt_list("研究タイプ", tp_sel)
+        t1 = _fmt_list("対象物", tg_sel); t2 = _fmt_list("研究分野", tp_sel)
         if t1: parts.append(t1)
         if t2: parts.append(t2)
         st.caption(" ｜ ".join(parts))

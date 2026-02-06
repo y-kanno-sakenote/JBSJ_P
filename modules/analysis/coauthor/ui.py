@@ -128,9 +128,9 @@ def render_coauthor_tab(df: pd.DataFrame, use_disk_cache: bool = False):
         st.warning("著者データが見つかりません。")
         return
 
-    df_use, y_from, y_to, tg_sel, tp_sel = adapt_filter_bar(df)
+    df_use, y_from, y_to, genre_sel, tg_sel, tp_sel = adapt_filter_bar(df)
     y_from, y_to, tg_sel, tp_sel = augment_with_session_state(y_from, y_to, tg_sel, tp_sel, key_prefix="authors")
-    banners.render_provenance(df_use, len(df), GlobalFilters(y_from, y_to, tg_sel, tp_sel))
+    banners.render_provenance(df_use, len(df), GlobalFilters(y_from, y_to, tg_sel, tp_sel, genre_sel=genre_sel))
 
     tab_count, tab_network, tab_trend = st.tabs(["① 論文数", "② 共著ネットワーク", "③ トレンド分析"])
 

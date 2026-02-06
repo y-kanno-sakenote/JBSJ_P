@@ -9,3 +9,8 @@ class GlobalFilters:
     year_to: Optional[int]
     targets: List[str]
     types: List[str]
+    genre_sel: List[str] = None # type: ignore
+    
+    def __post_init__(self):
+        if self.genre_sel is None:
+            object.__setattr__(self, 'genre_sel', [])

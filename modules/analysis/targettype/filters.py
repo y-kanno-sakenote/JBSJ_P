@@ -3,7 +3,7 @@
 from __future__ import annotations
 import pandas as pd
 import streamlit as st
-from modules.common.filters import render_filter_bar
+from modules.common.filters import render_filter_bar, parse_taxonomy_pairs
 from .base import TARGET_ORDER, TYPE_ORDER, apply_filters, year_min_max
 
 def summary_global_filters(y_from: int, y_to: int, tg_sel: list[str] | None, tp_sel: list[str] | None) -> str:
@@ -15,7 +15,7 @@ def summary_global_filters(y_from: int, y_to: int, tg_sel: list[str] | None, tp_
         txt = ", ".join(vs[:max_items]) + (" …" if len(vs) > max_items else "")
         parts.append(f"{name}：{txt}")
     _fmt("対象物", tg_sel)
-    _fmt("研究タイプ", tp_sel)
+    _fmt("研究分野", tp_sel)
     return " ｜ ".join(parts)
 
 def render_provenance_banner_from_df(df_use: pd.DataFrame, total_n: int, y_from: int | None = None, y_to: int | None = None, tg_sel: list[str] | None = None, tp_sel: list[str] | None = None) -> None:
@@ -34,7 +34,7 @@ def render_provenance_banner_from_df(df_use: pd.DataFrame, total_n: int, y_from:
             txt = ", ".join(vals[:max_items]) + (" …" if len(vals) > max_items else "")
             return f"{name}：{txt}"
         tg_txt = _fmt_list("対象物", tg_sel)
-        tp_txt = _fmt_list("研究タイプ", tp_sel)
+        tp_txt = _fmt_list("研究分野", tp_sel)
         if tg_txt: parts.append(tg_txt)
         if tp_txt: parts.append(tp_txt)
         st.caption(" ｜ ".join(parts))

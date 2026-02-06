@@ -382,6 +382,7 @@ st.title("醸造協会誌　論文検索 β_4.0")
 DEMO_CSV_PATH = Path("data/keywords_summary5.csv")   # メインCSV
 SUMMARY_CSV_PATH = Path("data/summaries.csv")         # ← 追加: summary
 AUTHORS_CSV_PATH = Path("data/authors_readings.csv")  # ← 追加: 著者読み
+WIDER_TAXONOMY_CSV_PATH = Path("data/paper_taxonomy_llm_wide.csv") # ← 追加: 拡張タクソナミー
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -429,10 +430,37 @@ if DEMO_CSV_PATH.exists():
 else:
     st.error(f"データファイルが見つかりません: {DEMO_CSV_PATH}")
     st.stop()
+
+# --- 拡張タクソナミーの読み込み ---
+from modules.common.filters import (
+    get_taxonomy_hierarchy, 
+    parse_taxonomy_pairs, 
+    apply_hierarchical_filters,
+    order_options,
+    GENRE_ORDER
+)
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_wider_taxonomy(path: Path) -> pd.DataFrame | None:
+    try:
+        if not path.exists():
+            return None
+        df_w = pd.read_csv(path, encoding="utf-8")
+        df_w.columns = [str(c).strip() for c in df_w.columns]
+        # 必要最小限の列だけ保持
+        keep_cols = ["file_name", "product_L0_top3", "target_pairs_top5", "research_pairs_top5"]
+        df_w = df_w[[c for c in keep_cols if c in df_w.columns]]
+        return df_w
+    except Exception:
+        return None
 # --- summary をマージ ---
 sum_df = load_summaries(SUMMARY_CSV_PATH)
 if sum_df is not None:
     df = df.merge(sum_df, on="file_name", how="left")
+
+wider_df = load_wider_taxonomy(WIDER_TAXONOMY_CSV_PATH)
+if wider_df is not None:
+    df = df.merge(wider_df, on="file_name", how="left")
 
  # ===================== タブ切り替え =====================
 tab_search, tab_analysis = st.tabs(["🔍 検索", "📊 分析"])
@@ -450,20 +478,51 @@ with tab_search:
     else:
         ymin_all, ymax_all = 1980, 2025
 
-    row1_y, row1_tg, row1_tp = st.columns([1.0, 1.2, 1.2])
+    # 1段目：年・ジャンル
+    row1_y, row1_g = st.columns([1, 1])
     with row1_y:
         y_from, y_to = st.slider(
             "発行年（範囲）", min_value=ymin_all, max_value=ymax_all,
             value=(ymin_all, ymax_all)
         )
-    with row1_tg:
-        raw_targets = {t for v in df.get("対象物_top3", pd.Series(dtype=str)).fillna("") for t in split_multi(v)}
-        targets_all = order_by_template(list(raw_targets), TARGET_ORDER)
-        targets_sel = st.multiselect("対象物で絞り込み", targets_all, default=[])
-    with row1_tp:
-        raw_types = {t for v in df.get("研究タイプ_top3", pd.Series(dtype=str)).fillna("") for t in split_multi(v)}
-        types_all = order_by_template(list(raw_types), TYPE_ORDER)
-        types_sel = st.multiselect("研究タイプで絞り込み", types_all, default=[])
+    with row1_g:
+        genre_all = {g.strip() for v in df.get("product_L0_top3", pd.Series(dtype=str)).fillna("") for g in v.split("|") if g.strip()}
+        genre_all = order_options(list(genre_all), GENRE_ORDER)
+        genre_sel = st.multiselect("ジャンル", genre_all, default=[])
+    
+    # 2段目：対象領域 (L1)・対象物 (L2)
+    row2_t1, row2_t2 = st.columns([1, 1])
+    target_l1_all, target_l1_to_l2 = get_taxonomy_hierarchy(df.get("target_pairs_top5", pd.Series(dtype=str)))
+    with row2_t1:
+        target_l1_sel = st.multiselect("対象領域 (L1)", target_l1_all, default=[])
+    
+    with row2_t2:
+        t_l1_missing = len(target_l1_sel) == 0
+        t2_cand = sorted({l2 for l1 in target_l1_sel for l2 in target_l1_to_l2.get(l1, [])}) if not t_l1_missing else []
+        target_l2_sel = st.multiselect(
+            "対象物 (L2)", 
+            t2_cand, 
+            default=[],
+            disabled=t_l1_missing,
+            help="対象領域 (L1) を選択すると、詳細な対象物を選べるようになります。" if t_l1_missing else None
+        )
+
+    # 3段目：研究手法 (L1)・研究目的 (L2)
+    row3_r1, row3_r2 = st.columns([1, 1])
+    research_l1_all, research_l1_to_l2 = get_taxonomy_hierarchy(df.get("research_pairs_top5", pd.Series(dtype=str)))
+    with row3_r1:
+        research_l1_sel = st.multiselect("研究分野", research_l1_all, default=[])
+
+    with row3_r2:
+        r_l1_missing = len(research_l1_sel) == 0
+        r2_cand = sorted({l2 for l1 in research_l1_sel for l2 in research_l1_to_l2.get(l1, [])}) if not r_l1_missing else []
+        research_l2_sel = st.multiselect(
+            "具体的なテーマ", 
+            r2_cand, 
+            default=[],
+            disabled=r_l1_missing,
+            help="研究分野を選択すると、具体的なテーマを選べるようになります。" if r_l1_missing else None
+        )
 
     # 2段目：著者・著者イニシャル選択
     col_author, col_initial = st.columns([1.5, 2])
@@ -570,12 +629,14 @@ with tab_search:
             sel = {norm_key(a) for a in authors_sel}
             def hit_author(v): return any(norm_key(x) in sel for x in split_authors(v))
             df2 = df2[df2["著者"].apply(hit_author)]
-        if targets_sel and "対象物_top3" in df2.columns:
-            t_norm = [norm_key(t) for t in targets_sel]
-            df2 = df2[df2["対象物_top3"].apply(lambda v: any(t in norm_key(v) for t in t_norm))]
-        if types_sel and "研究タイプ_top3" in df2.columns:
-            t_norm = [norm_key(t) for t in types_sel]
-            df2 = df2[df2["研究タイプ_top3"].apply(lambda v: any(t in norm_key(v) for t in t_norm))]
+        if genre_sel and "product_L0_top3" in df2.columns:
+            df2 = apply_hierarchical_filters(df2, genre_sel=genre_sel)
+        
+        if (target_l1_sel or target_l2_sel) and "target_pairs_top5" in df2.columns:
+            df2 = apply_hierarchical_filters(df2, t_l1_sel=target_l1_sel, t_l2_sel=target_l2_sel)
+        
+        if (research_l1_sel or research_l2_sel) and "research_pairs_top5" in df2.columns:
+            df2 = apply_hierarchical_filters(df2, r_l1_sel=research_l1_sel, r_l2_sel=research_l2_sel)
         toks = tokens_from_query(kw_query)
         if toks:
             def hit_kw(row):
@@ -611,7 +672,7 @@ with tab_search:
             parts.append(f"{name}：{txt}")
 
         _fmt_list("対象物", targets)
-        _fmt_list("研究タイプ", types)
+        _fmt_list("研究分野", types)
         _fmt_list("著者", authors)
 
         if kw_query and kw_query.strip():
@@ -625,13 +686,13 @@ with tab_search:
             f"{line}",
         )
 
-    _render_provenance_banner(
+        _render_provenance_banner(
         total_n=len(df),
         filtered_n=len(filtered),
         y_from=y_from, y_to=y_to,
         authors=authors_sel or [],
-        targets=targets_sel or [],
-        types=types_sel or [],
+        targets=target_l1_sel + target_l2_sel,
+        types=research_l1_sel + research_l2_sel,
         kw_query=kw_query,
         kw_mode=kw_mode
     )

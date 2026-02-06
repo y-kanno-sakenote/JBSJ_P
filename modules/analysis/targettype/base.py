@@ -12,7 +12,7 @@ TARGET_ORDER = [
 TYPE_ORDER = [
     "微生物・遺伝子関連","醸造工程・製造技術","応用利用・食品開発","成分分析・物性評価",
     "品質評価・官能評価","歴史・文化・経済","健康機能・栄養効果","統計解析・モデル化",
-    "環境・サステナビリティ","保存・安定性","その他（研究タイプ）"
+    "環境・サステナビリティ","保存・安定性","その他（研究分野）"
 ]
 
 def _order_options(all_options: list[str], preferred: list[str]) -> list[str]:
@@ -50,15 +50,27 @@ def year_min_max(df: pd.DataFrame) -> Tuple[int, int]:
         return (int(y.min()), int(y.max()))
     return (1980, 2025)
 
+from modules.common.filters import apply_hierarchical_filters, parse_taxonomy_pairs
+
 def apply_filters(df: pd.DataFrame, y_from: int, y_to: int, targets: List[str], types: List[str]) -> pd.DataFrame:
     use = df.copy()
     if "発行年" in use.columns:
         y = pd.to_numeric(use["発行年"], errors="coerce")
         use = use[(y >= y_from) & (y <= y_to) | y.isna()]
-    if targets and "対象物_top3" in use.columns:
-        use = use[col_contains_any(use["対象物_top3"], targets)]
-    if types and "研究タイプ_top3" in use.columns:
-        use = use[col_contains_any(use["研究タイプ_top3"], types)]
+    
+    # 新しいタクソナミー列がある場合は hierarchical フィルタを適用
+    # targets/types には L1+L2 が混ざって渡されている可能性があるため、それらを使ってヒット判定
+    has_wider = all(c in use.columns for c in ["target_pairs_top5", "research_pairs_top5"])
+    
+    if has_wider:
+        # この関数は targets/types をフラットなリストとして受け取るため、
+        # render_filter_bar が返したリスト (L1+L2) をそのまま各階層に適用する
+        use = apply_hierarchical_filters(use, t_l1_sel=targets, t_l2_sel=targets, r_l1_sel=types, r_l2_sel=types)
+    else:
+        if targets and "対象物_top3" in use.columns:
+            use = use[col_contains_any(use["対象物_top3"], targets)]
+        if types and "研究タイプ_top3" in use.columns:
+            use = use[col_contains_any(use["研究タイプ_top3"], types)]
     return use
 
 def node_options_for_mode(df_use: pd.DataFrame, mode: str) -> list[str]:
