@@ -22,7 +22,7 @@ except Exception:
 
 from .base import PALETTE
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def compute_node_communities_from_edges(edges: pd.DataFrame) -> dict[str, int]:
     if edges is None or edges.empty or not HAS_NX or not HAS_COMMUNITY: return {}
     G = nx.Graph()
@@ -37,7 +37,7 @@ def compute_node_communities_from_edges(edges: pd.DataFrame) -> dict[str, int]:
         for n in nodes: mapping[str(n)] = gi
     return mapping
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def build_pyvis_html(edges: pd.DataFrame, height_px: int = 650, freeze_layout: bool = False) -> tuple[str, str]:
     if not (HAS_NX and HAS_PYVIS): return ("","")
     if edges is None or edges.empty: return ("","")

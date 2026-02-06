@@ -111,7 +111,7 @@ def render_trend_block(df_use: pd.DataFrame, df_all: pd.DataFrame | None = None)
     else:
         st.line_chart(piv)
 
-    # サマリー（期間・対象物・研究タイプを含む）
+    # サマリー（期間・対象物・研究分野を含む）
     y_from, y_to, tg_sel, tp_sel = get_banner_filters(prefix="kw")
     period = f"{int(y_from)}–{int(y_to)}" if y_from is not None and y_to is not None else "—"
     tg_preview = short_preview(tg_sel or [], 3)
@@ -128,7 +128,7 @@ def render_trend_block(df_use: pd.DataFrame, df_all: pd.DataFrame | None = None)
     if tg_preview:
         parts.append(f"対象物：{tg_preview}")
     if tp_preview:
-        parts.append(f"研究タイプ：{tp_preview}")
+        parts.append(f"研究分野：{tp_preview}")
     if inc_pv:
         parts.append(f"必須：{inc_pv}")
     if exc_pv:

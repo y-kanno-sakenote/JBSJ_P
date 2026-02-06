@@ -14,7 +14,7 @@ from .compute import yearly_counts, yearly_counts_hierarchical
 from .base import TARGET_ORDER, TYPE_ORDER, split_multi
 from .filters import summary_global_filters
 
-def render_trend_block(df: pd.DataFrame, y_from: int, y_to: int, tg_sel: list[str], tp_sel: list[str]) -> None:
+def render_trend_block(df: pd.DataFrame, y_from: int, y_to: int, genre_sel: list[str], tg_sel: list[str], tp_sel: list[str]) -> None:
     has_wider = "target_pairs_top5" in df.columns and "research_pairs_top5" in df.columns
     
     # 1. 分析軸の選択
@@ -129,7 +129,7 @@ def render_trend_block(df: pd.DataFrame, y_from: int, y_to: int, tg_sel: list[st
         st.line_chart(piv, key=_uniq_key)
 
     _shown_n = piv.shape[1]
-    st.caption("条件：" + f"分析軸：{target_mode_label} ｜ 表示項目数：{_shown_n} ｜ 移動平均：{int(ma)}年 ｜ " + summary_global_filters(y_from, y_to, tg_sel, tp_sel))
+    st.caption("条件：" + f"分析軸：{target_mode_label} ｜ 表示項目数：{_shown_n} ｜ 移動平均：{int(ma)}年 ｜ " + summary_global_filters(y_from, y_to, genre_sel, tg_sel, tp_sel))
 
     # 5. データダウンロード
     with st.expander("📊 表データを表示（トレンド）", expanded=False):

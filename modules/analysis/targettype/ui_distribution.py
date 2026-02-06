@@ -33,9 +33,9 @@ def _px_sunburst(df_sb: pd.DataFrame, path: list[str], val_col: str, title: str)
     except Exception:
         return None
 
-def render_distribution_block(df: pd.DataFrame, y_from: int, y_to: int, tg_sel: list[str], tp_sel: list[str]) -> None:
+def render_distribution_block(df: pd.DataFrame, y_from: int, y_to: int, genre_sel: list[str], tg_sel: list[str], tp_sel: list[str]) -> None:
     st.markdown("<style>.subttl{font-size:0.95rem; opacity:0.75; margin:0 0 0.25rem;}</style>", unsafe_allow_html=True)
-    st.caption("条件：" + summary_global_filters(y_from, y_to, tg_sel, tp_sel))
+    st.caption("条件：" + summary_global_filters(y_from, y_to, genre_sel, tg_sel, tp_sel))
 
     has_wider = "target_pairs_top5" in df.columns and "research_pairs_top5" in df.columns
 

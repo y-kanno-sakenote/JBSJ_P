@@ -118,7 +118,7 @@ def _get_l2_nodes(df: pd.DataFrame, col: str) -> list[str]:
             if p[1]: nodes.add(p[1])
     return sorted(list(nodes))
 
-def render_cooccurrence_block(df_use: pd.DataFrame, y_from: int, y_to: int, tg_sel: list[str], tp_sel: list[str]) -> None:
+def render_cooccurrence_block(df_use: pd.DataFrame, y_from: int, y_to: int, genre_sel: list[str], tg_sel: list[str], tp_sel: list[str]) -> None:
     has_wider = "target_pairs_top5" in df_use.columns and "research_pairs_top5" in df_use.columns
     
     c1, c2, c3, c4, c5 = st.columns([1.5, 1.2, 1.0, 1.6, 1.6])
@@ -134,8 +134,8 @@ def render_cooccurrence_block(df_use: pd.DataFrame, y_from: int, y_to: int, tg_s
         # Legacy
         mode_map = {
             "対象物のみ": "対象物のみ",
-            "研究分野のみ": "研究タイプのみ",
-            "対象物×研究分野": "対象物×研究タイプ"
+            "研究分野のみ": "研究分野のみ",
+            "対象物×研究分野": "対象物×研究分野"
         }
         
     with c1:
@@ -185,23 +185,54 @@ def render_cooccurrence_block(df_use: pd.DataFrame, y_from: int, y_to: int, tg_s
         keep_nodes = set(deg.sort_values(ascending=False).head(int(topN)).index.tolist())
         edges = edges[edges["src"].isin(keep_nodes) & edges["dst"].isin(keep_nodes)].reset_index(drop=True)
 
+    # 1. 転置インデックス作成 (高速化)
+    title_col = "論文タイトル" # or preferred
+    from .compute import prefer_title_column
+    title_col = prefer_title_column(df_use) or "論文タイトル"
+    
+    df_titles = df_use[df_use[title_col].notna()].copy()
+    inv_idx_tg = {}
+    inv_idx_rp = {}
+    
+    has_pre = "_target_pairs" in df_titles.columns and "_research_pairs" in df_titles.columns
+    if has_pre:
+        for idx, row in df_titles.iterrows():
+            for p in row["_target_pairs"]:
+                if p[1]: inv_idx_tg.setdefault(p[1], set()).add(idx)
+            for p in row["_research_pairs"]:
+                if p[1]: inv_idx_rp.setdefault(p[1], set()).add(idx)
+    
     comm_id, palette = _compute_communities_from_edges(edges)
     edge_clusters, edge_colors, ex_titles = [], [], []
+    
     for _, r in edges.iterrows():
         a, b = str(r["src"]), str(r["dst"])
         ca, cb = comm_id.get(a, 0), comm_id.get(b, 0)
         c_use = ca if ca == cb else ca
         edge_clusters.append(c_use)
-        
         edge_colors.append(palette.get(c_use, "#999999"))
         
         # タイトル例取得
-        titles = []
-        if has_wider:
-            titles = example_titles_for_edge_hierarchical(df_use, mode_val, a, b, limit=3)
+        if has_pre:
+            if mode_val in ("Target L2 Only", "対象物のみ"):
+                matches = inv_idx_tg.get(a, set()) & inv_idx_tg.get(b, set())
+            elif mode_val in ("Research L2 Only", "研究分野のみ"):
+                matches = inv_idx_rp.get(a, set()) & inv_idx_rp.get(b, set())
+            else: # Cross
+                matches = inv_idx_tg.get(a, set()) & inv_idx_rp.get(b, set())
+            
+            if matches:
+                titles = df_titles.loc[list(matches)[:3], title_col].tolist()
+                ex_titles.append(" / ".join(titles))
+            else:
+                ex_titles.append("")
         else:
-            titles = example_titles_for_edge(df_use, mode_val, a, b, limit=3)
-        ex_titles.append(" / ".join(titles))
+            # Fallback
+            if has_wider:
+                titles = example_titles_for_edge_hierarchical(df_use, mode_val, a, b, limit=3)
+            else:
+                titles = example_titles_for_edge(df_use, mode_val, a, b, limit=3)
+            ex_titles.append(" / ".join(titles))
 
     edges = edges.copy()
     edges["cluster_id"] = edge_clusters
@@ -214,11 +245,11 @@ def render_cooccurrence_block(df_use: pd.DataFrame, y_from: int, y_to: int, tg_s
              + f"ネットワーク：{mode_label} ｜ 表示するノード数：{int(topN)} ｜ 最低共起数≧{int(min_edge)} ｜ "
              + (f"必須：{len(include_terms)}件 ｜ " if include_terms else "必須：0件 ｜ ")
              + (f"除外：{len(exclude_terms)}件 ｜ " if exclude_terms else "除外：0件 ｜ ")
-             + summary_global_filters(y_from, y_to, tg_sel, tp_sel))
+             + summary_global_filters(y_from, y_to, genre_sel, tg_sel, tp_sel))
 
     if mode_val in ("対象物のみ", "Target L2 Only"):
         col_a, col_b = "対象物A", "対象物B"
-    elif mode_val in ("研究タイプのみ", "Research L2 Only"):
+    elif mode_val in ("研究分野のみ", "Research L2 Only"):
         col_a, col_b = "具体的なテーマA", "具体的なテーマB"
     else:
         col_a, col_b = "対象物", "具体的なテーマ"
@@ -255,7 +286,7 @@ def render_cooccurrence_block(df_use: pd.DataFrame, y_from: int, y_to: int, tg_s
                          + f"ネットワーク：{mode_label} ｜ 表示するノード数：{int(topN)} ｜ 最低共起数≧{int(min_edge)} ｜ "
                          + (f"必須：{len(include_terms)}件 ｜ " if include_terms else "必須：0件 ｜ ")
                          + (f"除外：{len(exclude_terms)}件 ｜ " if exclude_terms else "除外：0件 ｜ ")
-                         + summary_global_filters(y_from, y_to, tg_sel, tp_sel))
+                         + summary_global_filters(y_from, y_to, genre_sel, tg_sel, tp_sel))
                 _draw_pyvis_from_edges(edges, height_px=680, fixed_layout=fix_layout, node_colors=node_colors, footer_caption=_foot)
         else:
             st.info("networkx / pyvis が未導入のため、表のみ表示しています。")

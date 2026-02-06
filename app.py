@@ -3,7 +3,7 @@
 論文検索（統一UI版：お気に入りにタグを“表で直接入力”）
 
 機能:
-- 発行年レンジ、巻・号（複数選択）、著者（正規化・複数選択）、対象物/研究タイプ（部分一致・複数選択）
+- 発行年レンジ、巻・号（複数選択）、著者（正規化・複数選択）、対象物/研究分野（部分一致・複数選択）
 - キーワード AND/OR 検索（空白/カンマ区切り、pdf_text を含めるか選択可能）
 - 検索結果テーブル（不要列の非表示、HP/PDF のリンク化、★でお気に入り）
 - お気に入り一覧（常設・★で解除/追加）
@@ -263,7 +263,7 @@ TARGET_ORDER = _COMMON_TARGET_ORDER or [
 TYPE_ORDER = _COMMON_TYPE_ORDER or [
     "微生物・遺伝子関連","醸造工程・製造技術","応用利用・食品開発","成分分析・物性評価",
     "品質評価・官能評価","歴史・文化・経済","健康機能・栄養効果","統計解析・モデル化",
-    "環境・サステナビリティ","保存・安定性","その他（研究タイプ）"
+    "環境・サステナビリティ","保存・安定性","その他（研究分野）"
 ]
 
 # -------------------- ユーティリティ --------------------
@@ -384,28 +384,7 @@ SUMMARY_CSV_PATH = Path("data/summaries.csv")         # ← 追加: summary
 AUTHORS_CSV_PATH = Path("data/authors_readings.csv")  # ← 追加: 著者読み
 WIDER_TAXONOMY_CSV_PATH = Path("data/paper_taxonomy_llm_wide.csv") # ← 追加: 拡張タクソナミー
 
-
-@st.cache_data(ttl=600, show_spinner=False)
-def load_local_csv(path: Path) -> pd.DataFrame:
-    return ensure_cols(pd.read_csv(path, encoding="utf-8"))
-
-
-# --- 追加：summaries.csv ローダ ---
-@st.cache_data(ttl=600, show_spinner=False)
-def load_summaries(path: Path) -> pd.DataFrame | None:
-    try:
-        if not path.exists():
-            return None
-        df_s = pd.read_csv(path, encoding="utf-8")
-        df_s.columns = [str(c).strip() for c in df_s.columns]
-        if not {"file_name", "summary"}.issubset(df_s.columns):
-            return None
-        return df_s[["file_name", "summary"]]
-    except Exception:
-        return None
-
-# --- 追加：authors_readings.csv ローダ ---
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_authors_readings(path: Path) -> pd.DataFrame | None:
     try:
         if not path.exists():
@@ -422,16 +401,6 @@ def load_authors_readings(path: Path) -> pd.DataFrame | None:
     except Exception:
         return None
 
-# -------------------- データ読み込み（固定：同梱CSV） --------------------
-df = None
-if DEMO_CSV_PATH.exists():
-    df = load_local_csv(DEMO_CSV_PATH)
-    st.caption(f"✅ デモCSVを読み込みました: {DEMO_CSV_PATH}")
-else:
-    st.error(f"データファイルが見つかりません: {DEMO_CSV_PATH}")
-    st.stop()
-
-# --- 拡張タクソナミーの読み込み ---
 from modules.common.filters import (
     get_taxonomy_hierarchy, 
     parse_taxonomy_pairs, 
@@ -440,29 +409,96 @@ from modules.common.filters import (
     GENRE_ORDER
 )
 
-@st.cache_data(ttl=600, show_spinner=False)
-def load_wider_taxonomy(path: Path) -> pd.DataFrame | None:
-    try:
-        if not path.exists():
-            return None
-        df_w = pd.read_csv(path, encoding="utf-8")
+@st.cache_data(ttl=3600, show_spinner="データを読み込み中...")
+def load_all_data() -> pd.DataFrame:
+    # 1. メインCSVの読み込み
+    df = pd.read_csv(DEMO_CSV_PATH, encoding="utf-8")
+    df.columns = [str(c).strip() for c in df.columns]
+    
+    # 2. summary をマージ
+    if SUMMARY_CSV_PATH.exists():
+        sum_df = pd.read_csv(SUMMARY_CSV_PATH, encoding="utf-8")
+        sum_df.columns = [str(c).strip() for c in sum_df.columns]
+        if {"file_name", "summary"}.issubset(sum_df.columns):
+            df = df.merge(sum_df[["file_name", "summary"]], on="file_name", how="left")
+
+    # 3. 拡張タクソナミーをマージ
+    if WIDER_TAXONOMY_CSV_PATH.exists():
+        df_w = pd.read_csv(WIDER_TAXONOMY_CSV_PATH, encoding="utf-8")
         df_w.columns = [str(c).strip() for c in df_w.columns]
-        # 必要最小限の列だけ保持
         keep_cols = ["file_name", "product_L0_top3", "target_pairs_top5", "research_pairs_top5"]
         df_w = df_w[[c for c in keep_cols if c in df_w.columns]]
-        return df_w
-    except Exception:
-        return None
-# --- summary をマージ ---
-sum_df = load_summaries(SUMMARY_CSV_PATH)
-if sum_df is not None:
-    df = df.merge(sum_df, on="file_name", how="left")
+        df = df.merge(df_w, on="file_name", how="left")
 
-wider_df = load_wider_taxonomy(WIDER_TAXONOMY_CSV_PATH)
-if wider_df is not None:
-    df = df.merge(wider_df, on="file_name", how="left")
+    # 4. 不要な巨大列の削除（メモリ節約・処理高速化）
+    # _raw_text や証拠系（evidence, reason）など、検索や表示に使わない巨大列を落とす
+    drop_patterns = [r"_raw_text$", r"_evidence$", r"_reason$", r"matched_L3_"]
+    cols_to_drop = [c for c in df.columns if any(re.search(p, c) for p in drop_patterns)]
+    if cols_to_drop:
+        df = df.drop(columns=cols_to_drop)
 
- # ===================== タブ切り替え =====================
+    # 5. 検索用ヘイスタックの事前作成
+    # 毎回行ごとに連結・正規化すると重いため、一度だけ計算しておく
+    def build_haystack(row):
+        parts = [
+            str(row.get("論文タイトル", "")),
+            str(row.get("著者", "")),
+            str(row.get("file_name", "")),
+            " ".join(str(row.get(c, "")) for c in KEY_COLS if c in row),
+            str(row.get("summary", "")),
+        ]
+        return norm_key(" ".join(parts))
+
+    df["_haystack"] = df.apply(build_haystack, axis=1)
+    
+    # 6. その他の前処理
+    if "著者" in df.columns:
+        df = consolidate_authors_column(df)
+        # 検索高速化用：正規化済み著者のリスト
+        df["_norm_authors"] = df["著者"].apply(lambda v: {norm_key(x) for x in split_authors(v)})
+    
+    # 年のクリーンアップ（カンマ除去など）
+    if "発行年" in df.columns:
+        df["発行年"] = df["発行年"].astype(str).str.replace(",", "").str.strip()
+        
+    # 7. _row_id の事前作成
+    df["_row_id"] = df.apply(make_row_id, axis=1)
+
+    # 8. 分析用事前計算 (slow iterrows を避けるため)
+    # 8-1. キーワード整理
+    from modules.analysis.keywords.base import split_multi as kw_split
+    from modules.analysis.keywords.stopwords import clean_token as kw_clean
+    
+    def get_clean_kws(row):
+        words = []
+        for c in KEY_COLS:
+            val = row.get(c)
+            if val and pd.notna(val):
+                for w in kw_split(val):
+                    cw = kw_clean(w)
+                    if cw: words.append(cw)
+        return words
+    df["_clean_keywords"] = df.apply(get_clean_kws, axis=1)
+
+    # 8-2. タクソナミーペア整理
+    from modules.common.filters import parse_taxonomy_pairs
+    if "target_pairs_top5" in df.columns:
+        df["_target_pairs"] = df["target_pairs_top5"].apply(parse_taxonomy_pairs)
+    if "research_pairs_top5" in df.columns:
+        df["_research_pairs"] = df["research_pairs_top5"].apply(parse_taxonomy_pairs)
+    
+    # 8-3. 著者リスト整理
+    if "著者" in df.columns:
+        df["_split_authors"] = df["著者"].apply(lambda v: list(dict.fromkeys(split_authors(v))))
+
+    return df
+
+df = load_all_data()
+
+# 著者読み込みは別途必要（UI用）
+adf = load_authors_readings(AUTHORS_CSV_PATH)
+
+# ===================== タブ切り替え =====================
 tab_search, tab_analysis = st.tabs(["🔍 検索", "📊 分析"])
 
 # 永続キャッシュは本番では常時ON（UIは廃止）
@@ -470,7 +506,7 @@ use_disk_cache = True
 
 with tab_search:
     # -------------------- 検索フィルタ（分析タブと順序を揃える） --------------------
-    # 1段目：発行年・対象物・研究タイプ
+    # 1段目：発行年・対象物・研究分野
     st.subheader("検索フィルタ")
     year_vals = pd.to_numeric(df.get("発行年", pd.Series(dtype=str)), errors="coerce")
     if year_vals.notna().any():
@@ -507,7 +543,7 @@ with tab_search:
             help="対象領域 (L1) を選択すると、詳細な対象物を選べるようになります。" if t_l1_missing else None
         )
 
-    # 3段目：研究手法 (L1)・研究目的 (L2)
+    # 3段目：研究分野 (L1)・具体的なテーマ (L2)
     row3_r1, row3_r2 = st.columns([1, 1])
     research_l1_all, research_l1_to_l2 = get_taxonomy_hierarchy(df.get("research_pairs_top5", pd.Series(dtype=str)))
     with row3_r1:
@@ -538,7 +574,7 @@ with tab_search:
         )
     ini = st.session_state["author_initial"]
     with col_author:
-        adf = load_authors_readings(AUTHORS_CSV_PATH)
+        # adf は既にグローバルで読み込み済み
         if adf is not None and not adf.empty:
             cand = adf.copy()
             GOJUON = {
@@ -625,10 +661,10 @@ with tab_search:
         if "発行年" in df2.columns:
             y = pd.to_numeric(df2["発行年"], errors="coerce")
             df2 = df2[(y >= y_from) & (y <= y_to) | y.isna()]
-        if authors_sel and "著者" in df2.columns:
+        if authors_sel and "_norm_authors" in df2.columns:
             sel = {norm_key(a) for a in authors_sel}
-            def hit_author(v): return any(norm_key(x) in sel for x in split_authors(v))
-            df2 = df2[df2["著者"].apply(hit_author)]
+            # セットの積集合を利用して高速化
+            df2 = df2[df2["_norm_authors"].apply(lambda v: not v.disjoint(sel))]
         if genre_sel and "product_L0_top3" in df2.columns:
             df2 = apply_hierarchical_filters(df2, genre_sel=genre_sel)
         
@@ -639,10 +675,18 @@ with tab_search:
             df2 = apply_hierarchical_filters(df2, r_l1_sel=research_l1_sel, r_l2_sel=research_l2_sel)
         toks = tokens_from_query(kw_query)
         if toks:
-            def hit_kw(row):
-                hs = haystack(row)
-                return all(t in hs for t in toks) if kw_mode == "AND" else any(t in hs for t in toks)
-            df2 = df2[df2.apply(hit_kw, axis=1)]
+            # 事前計算済みの _haystack を使用して高速化
+            # matches は True/False の Series
+            matches = pd.Series([True] * len(df2), index=df2.index)
+            for t in toks:
+                if kw_mode == "AND":
+                    matches &= df2["_haystack"].str.contains(re.escape(t), case=False, regex=True)
+                else:
+                    if matches.all(): # 初回 OR
+                        matches = df2["_haystack"].str.contains(re.escape(t), case=False, regex=True)
+                    else:
+                        matches |= df2["_haystack"].str.contains(re.escape(t), case=False, regex=True)
+            df2 = df2[matches]
         return df2
 
     filtered = apply_filters(df)
@@ -706,19 +750,12 @@ with tab_search:
         if "summary" not in visible_cols:
             visible_cols.insert(idx + 1, "summary")
 
-    disp = filtered.loc[:, visible_cols].copy()
+    disp = filtered.loc[:, visible_cols + ["_row_id"]].copy()
     # Ensure 終了ページ is available for display even if make_visible_cols hid it
     if "終了ページ" in filtered.columns and "終了ページ" not in disp.columns:
         disp["終了ページ"] = filtered["終了ページ"]
-    disp["_row_id"] = disp.apply(make_row_id, axis=1)
-
-    # 表示用に発行年のカンマ(,)を除去（例: "1,988" -> "1988"）
-    if "発行年" in disp.columns:
-        try:
-            disp["発行年"] = disp["発行年"].astype(str).str.replace(",", "").str.strip()
-        except Exception:
-            pass
-
+    
+    # 事前計算済みの _row_id と 発行年 を使用する
     if "favs" not in st.session_state:
         st.session_state.favs = set()
     if "fav_tags" not in st.session_state:
@@ -751,10 +788,19 @@ with tab_search:
     rest = [c for c in disp.columns if c not in set(front) and c != "_row_id"]
     display_order = front + rest + ["_row_id"]
 
+    # 表示用に件数制限（ブラウザ保護のため）
+    MAX_DISPLAY = 5000
+    n_filtered = len(filtered)
+    if n_filtered > MAX_DISPLAY:
+        st.warning(f"検索結果が多すぎるため（{n_filtered}件）、上位 {MAX_DISPLAY}件のみ表示しています。絞り込み条件を追加してください。")
+        disp_data = disp.iloc[:MAX_DISPLAY][display_order]
+    else:
+        disp_data = disp[display_order]
+
     with st.form("main_table_form", clear_on_submit=False):
         # (per-row immediate toggle removed — keep session-only checkboxes in the table)
         edited_main = st.data_editor(
-            disp[display_order],
+            disp_data,
             key="main_editor",
             use_container_width=True,
             hide_index=True,
@@ -766,7 +812,10 @@ with tab_search:
         apply_main = st.form_submit_button("チェックした論文をお気に入りリストに追加", use_container_width=True)
 
     if apply_main:
-        subset_ids_main = set(disp["_row_id"].tolist())
+        # disp_data ではなく、元々の disp (フィルタ全件) を基準にする必要がある場合もあるが、
+        # 通常は表示されているものからチェックするので disp_data で良い
+        # ただし、Favorite への反映は ID ベースなので、edited_main から True のものを取り出す
+        subset_ids_main = set(disp_data["_row_id"].tolist())
         checked_subset_main = set(edited_main.loc[edited_main["★"] == True, "_row_id"].tolist())
         st.session_state.favs = (st.session_state.favs - subset_ids_main) | checked_subset_main
 
@@ -780,22 +829,20 @@ with tab_search:
             st.rerun()
 
     # お気に入り一覧（フィルタ無視で全体から）＋ tags 列（編集可）
+    # すでに事前計算されている df を使用する
     visible_cols_full = make_visible_cols(df)
     if "著者" in visible_cols_full and "summary" in df.columns:
         idx = visible_cols_full.index("著者")
         if "summary" not in visible_cols_full:
             visible_cols_full.insert(idx + 1, "summary")
 
-    fav_disp_full = df.loc[:, visible_cols_full].copy()
-    fav_disp_full["_row_id"] = fav_disp_full.apply(make_row_id, axis=1)
-    fav_disp = fav_disp_full[fav_disp_full["_row_id"].isin(st.session_state.favs)].copy()
+    # fav_disp_full に全行コピーすると重いため、先にフィルタする
+    fav_disp = df[df["_row_id"].isin(st.session_state.favs)].copy()
+    # 表示用列だけに絞る
+    fav_disp = fav_disp[visible_cols_full + ["_row_id"]]
 
-    # お気に入り表示用にも発行年のカンマを除去
-    if "発行年" in fav_disp_full.columns:
-        try:
-            fav_disp_full["発行年"] = fav_disp_full["発行年"].astype(str).str.replace(",", "").str.strip()
-        except Exception:
-            pass
+    # お気に入り表示用にも発行年のカンマを除去（※ load_all_data で対応済みの場合は不要）
+    # すでに事前計算済み。
 
     def tags_str_for(rid: str) -> str:
         s = st.session_state.fav_tags.get(rid, set())
@@ -870,7 +917,8 @@ with tab_search:
         tag_query = st.text_input("タグ検索（空白/カンマで複数可）", key="tag_query")
         tag_mode = st.radio("一致条件", ["OR", "AND"], index=0, horizontal=True, key="tag_mode")
 
-        fav_disp_for_filter = fav_disp_full[fav_disp_full["_row_id"].isin(st.session_state.favs)].copy()
+        # fav_disp_full は削除したため、df から直接抽出
+        fav_disp_for_filter = df[df["_row_id"].isin(st.session_state.favs)].copy()
         if tag_query.strip():
             tags = [t.strip() for t in re.split(r"[ ,，、；;　]+", tag_query) if t.strip()]
             def match_tags_row(row):
@@ -883,7 +931,7 @@ with tab_search:
             return ", ".join(sorted(s)) if s else ""
         fav_disp_for_filter["tags"] = fav_disp_for_filter["_row_id"].apply(tags_str_for_filter)
 
-        show_cols = ["No.","発行年","巻数","号数","論文タイトル","著者","対象物_top3","研究タイプ","HPリンク先","PDFリンク先","tags"]
+        show_cols = ["No.","発行年","巻数","号数","論文タイトル","著者","対象物_top3","研究分野","HPリンク先","PDFリンク先","tags"]
         show_cols = [c for c in show_cols if c in fav_disp_for_filter.columns]
         # ensure displayed year has no comma
         if "発行年" in fav_disp_for_filter.columns:
@@ -906,7 +954,8 @@ with tab_search:
         except Exception:
             pass
 
-    fav_export = fav_disp_full[fav_disp_full["_row_id"].isin(st.session_state.favs)].copy()
+    fav_all = df[df["_row_id"].isin(st.session_state.favs)]
+    fav_export = fav_all.copy()
     def _tags_join(rid: str) -> str:
         s = st.session_state.fav_tags.get(rid, set())
         return ", ".join(sorted(s)) if s else ""

@@ -118,8 +118,8 @@ _METRIC_JA = {
     "eigenvector": "固有ベクトル（影響力）",
 }
 
-def _summarize(y_from: int, y_to: int, tg_sel, tp_sel) -> str:
-    gf = GlobalFilters(y_from, y_to, tg_sel, tp_sel)
+def _summarize(y_from: int, y_to: int, genre_sel, tg_sel, tp_sel) -> str:
+    gf = GlobalFilters(y_from, y_to, tg_sel, tp_sel, genre_sel=genre_sel)
     return banners.summarize(gf)
 
 def render_coauthor_tab(df: pd.DataFrame, use_disk_cache: bool = False):
@@ -129,7 +129,12 @@ def render_coauthor_tab(df: pd.DataFrame, use_disk_cache: bool = False):
         return
 
     df_use, y_from, y_to, genre_sel, tg_sel, tp_sel = adapt_filter_bar(df)
-    y_from, y_to, tg_sel, tp_sel = augment_with_session_state(y_from, y_to, tg_sel, tp_sel, key_prefix="authors")
+    y_from, y_to, genre_sel, tg_sel, tp_sel = augment_with_session_state(y_from, y_to, genre_sel, tg_sel, tp_sel, key_prefix="authors")
+    
+    # セッション状態から復元した値で再フィルタリングを確実に実行
+    from .filters_adapter import apply_filters_basic
+    df_use = apply_filters_basic(df, int(y_from), int(y_to), genre_sel, tg_sel, tp_sel)
+    
     banners.render_provenance(df_use, len(df), GlobalFilters(y_from, y_to, tg_sel, tp_sel, genre_sel=genre_sel))
 
     tab_count, tab_network, tab_trend = st.tabs(["① 論文数", "② 共著ネットワーク", "③ トレンド分析"])
@@ -205,7 +210,7 @@ def render_coauthor_tab(df: pd.DataFrame, use_disk_cache: bool = False):
             if mode != "すべて": parts.append(mode)
             if position: parts.append("・".join(position))
             parts.append(period)
-            st.caption(f"条件：{'・'.join(parts)} ｜ ランキング件数：{int(top_n)} ｜ " + _summarize(y_from, y_to, tg_sel, tp_sel))
+            st.caption(f"条件：{'・'.join(parts)} ｜ ランキング件数：{int(top_n)} ｜ " + _summarize(y_from, y_to, genre_sel, tg_sel, tp_sel))
 
 
     # ===== ② 共著ネットワーク =====
@@ -450,7 +455,7 @@ def render_coauthor_tab(df: pd.DataFrame, use_disk_cache: bool = False):
                                 f"{_METRIC_JA.get(str(metric), str(metric))} ｜ "
                                 f"ランキング件数：{int(top_n)} ｜ 最小共著回数：{int(min_w)} ｜ "
                                 f"必須：{len(must_sel)}件／除外：{len(excl_sel)}件 ｜ "
-                                + banners.summarize(GlobalFilters(y_from, y_to, tg_sel, tp_sel))
+                                + banners.summarize(GlobalFilters(y_from, y_to, tg_sel, tp_sel, genre_sel=genre_sel))
                             )
             except Exception as _e:
                 st.caption(f"中心著者サマリーの生成に失敗しました: {_e!s}")
@@ -459,7 +464,7 @@ def render_coauthor_tab(df: pd.DataFrame, use_disk_cache: bool = False):
                     f"{_METRIC_JA.get(str(metric), str(metric))} ｜ "
                     f"ランキング件数：{int(top_n)} ｜ 最小共著回数：{int(min_w)} ｜ "
                     f"必須：{len(must_sel)}件／除外：{len(excl_sel)}件 ｜ "
-                    + banners.summarize(GlobalFilters(y_from, y_to, tg_sel, tp_sel))
+                    + banners.summarize(GlobalFilters(y_from, y_to, tg_sel, tp_sel, genre_sel=genre_sel))
                 )
 
             # ランキング表（上位）
@@ -542,7 +547,7 @@ def render_coauthor_tab(df: pd.DataFrame, use_disk_cache: bool = False):
         except Exception:
             st.line_chart(piv)
 
-        st.caption(f"条件：表示著者={len(sel)}名 ｜ 移動平均={int(ma)}年 ｜ 指標={metric_mode} ｜ " + _summarize(y_from, y_to, tg_sel, tp_sel))
+        st.caption(f"条件：表示著者={len(sel)}名 ｜ 移動平均={int(ma)}年 ｜ 指標={metric_mode} ｜ " + _summarize(y_from, y_to, genre_sel, tg_sel, tp_sel))
 
 
         # --- 折れ線グラフに対応した表（折り畳み式）を表示 ---

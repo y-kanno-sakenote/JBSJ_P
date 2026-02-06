@@ -128,7 +128,7 @@ def render_cooccur_block(df_use: pd.DataFrame, df_all: pd.DataFrame | None = Non
             chips.append(f"<span style='display:inline-block;width:10px;height:10px;border-radius:2px;background:{col};margin:0 6px 0 0;vertical-align:middle;'></span> C{cid+1}（{counts[cid]}語）")
         st.markdown("**クラスタ凡例**&nbsp;&nbsp;" + " ".join(chips), unsafe_allow_html=True)
 
-    # 条件サマリー（期間の右に 対象物・研究タイプ を追加）
+    # 条件サマリー（期間の右に 対象物・研究分野 を追加）
     _inc_pv = short_preview(include_list, 3)
     _exc_pv = short_preview(exclude_list, 3)
     y_from, y_to, tg_sel, tp_sel = get_banner_filters(prefix="kw")
@@ -147,7 +147,7 @@ def render_cooccur_block(df_use: pd.DataFrame, df_all: pd.DataFrame | None = Non
     if tg_preview:
         parts.append(f"対象物：{tg_preview}")
     if tp_preview:
-        parts.append(f"研究タイプ：{tp_preview}")
+        parts.append(f"研究分野：{tp_preview}")
     st.caption(" ｜ ".join(parts))
 
     # コピーUI（ノード名）
@@ -176,62 +176,49 @@ def render_cooccur_block(df_use: pd.DataFrame, df_all: pd.DataFrame | None = Non
             if tg_preview:
                 _parts_draw.append(f"対象物：{tg_preview}")
             if tp_preview:
-                _parts_draw.append(f"研究タイプ：{tp_preview}")
+                _parts_draw.append(f"研究分野：{tp_preview}")
             st.caption(" ｜ ".join(_parts_draw))
 
 def _attach_example_titles(df_src: pd.DataFrame, edges: pd.DataFrame, max_titles: int = 3) -> pd.DataFrame:
-    # Columns to try for titles
-    title_columns = [
-        "タイトル","論文タイトル","論文名","題名","title","Title","Japanese Title","English Title",
-        "title_ja","title_en","タイトル（和）","タイトル（英）","和文タイトル","英文タイトル"
-    ]
-    available_cols = [col for col in title_columns if col in df_src.columns]
+    from .compute import prefer_title_column
+    title_col = prefer_title_column(df_src)
+    if not title_col or edges.empty:
+        edges = edges.copy()
+        edges["example_titles"] = ""
+        return edges
 
-    # Columns to try for keywords
-    keyword_columns = [
-        "llm_keywords", "primary_keywords", "secondary_keywords", "featured_keywords"
-    ] + [f"キーワード{i}" for i in range(1,11)]
+    # 使用可能なデータのみに絞る
+    df_titles = df_src[df_src[title_col].notna()].copy()
+    if "_clean_keywords" not in df_titles.columns:
+        # フォールバック: 旧来の重い処理
+        edges = edges.copy()
+        edges["example_titles"] = ""
+        return edges
 
-    # Extract keywords sets from df_src rows
-    # Use _split and norm_key for tokens
-    def extract_keywords_from_row(row) -> set[str]:
-        kw_set = set()
-        for col in keyword_columns:
-            if col in df_src.columns:
-                val = row.get(col)
-                if isinstance(val, str) and val.strip():
-                    kw_set.update(norm_key(k) for k in _split(val))
-        return kw_set
+    # 1. 転置インデックス（キーワード -> 行インデックスの集合）を作成
+    # これにより、ペア（語A, 語B）を含む行を高速に特定できる
+    inv_idx = {}
+    for idx, kws in df_titles["_clean_keywords"].items():
+        for kw in kws:
+            inv_idx.setdefault(kw, set()).add(idx)
 
-    # Build list of (keyword_set, title)
-    kw_title_list = []
-    for _, row in df_src.iterrows():
-        # Find first available title column with non-empty string
-        title = None
-        for col in available_cols:
-            val = row.get(col)
-            if isinstance(val, str) and val.strip():
-                title = val.strip()
-                break
-        if not title:
-            continue
-        kw_set = extract_keywords_from_row(row)
-        if not kw_set:
-            continue
-        kw_title_list.append((kw_set, title))
-
-    # For each edge, find up to max_titles titles where both src and dst in kw_set
+    # 2. 各エッジについて該当するタイトルを抽出
     example_titles = []
     for _, row in edges.iterrows():
-        src = norm_key(str(row["src"]))
-        dst = norm_key(str(row["dst"]))
-        matched_titles = []
-        for kw_set, title in kw_title_list:
-            if src in kw_set and dst in kw_set:
-                matched_titles.append(title)
-                if len(matched_titles) >= max_titles:
-                    break
-        example_titles.append(" ／ ".join(matched_titles))
+        src, dst = str(row["src"]), str(row["dst"])
+        # 両方のキーワードを含む行番号の積集合
+        matched_indices = inv_idx.get(src, set()) & inv_idx.get(dst, set())
+        
+        if not matched_indices:
+            example_titles.append("")
+            continue
+            
+        # 発行年が新しい順にしたい場合はここでソートが必要だが、
+        # 高速化優先でそのまま（あるいは loc で取得後にソート）
+        # 簡単のため head(max_titles)
+        titles = df_titles.loc[list(matched_indices)[:max_titles], title_col].tolist()
+        example_titles.append(" ／ ".join(titles))
+
     edges = edges.copy()
     edges["example_titles"] = example_titles
     return edges

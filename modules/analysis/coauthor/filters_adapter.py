@@ -7,7 +7,7 @@ import streamlit as st
 from modules.common.orders import TARGET_ORDER, TYPE_ORDER
 
 # --- 年レンジユーティリティ ---
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def year_min_max(df: pd.DataFrame) -> Tuple[int, int]:
     if "発行年" not in df.columns:
         return (1980, 2025)
@@ -71,7 +71,7 @@ except Exception:
             tg_sel = st.multiselect("対象物で絞り込み（部分一致）",
                                     options=tg_all, default=[], key=f"{key_prefix}_tg")
         with c3:
-            tp_sel = st.multiselect("研究タイプで絞り込み（部分一致）",
+            tp_sel = st.multiselect("研究分野で絞り込み（部分一致）",
                                     options=tp_all, default=[], key=f"{key_prefix}_tp")
         return {"year": (y_from, y_to), "targets": tg_sel, "types": tp_sel}
 
@@ -107,7 +107,7 @@ def adapt_filter_bar(df: pd.DataFrame):
     y_from, y_to = year_min_max(df)
     return df, y_from, y_to, [], [], []
 
-def augment_with_session_state(y_from: int, y_to: int, tg_sel: list[str], tp_sel: list[str], key_prefix="authors"):
+def augment_with_session_state(y_from: int, y_to: int, genre_sel: list[str], tg_sel: list[str], tp_sel: list[str], key_prefix="authors"):
     try:
         ss = st.session_state
         if (y_from is None) or (y_to is None):
@@ -121,15 +121,17 @@ def augment_with_session_state(y_from: int, y_to: int, tg_sel: list[str], tp_sel
                 if isinstance(v, (list, tuple)) and len(v) > 0:
                     return [str(x) for x in v if str(x).strip()]
             return []
+        if not genre_sel:
+            genre_sel = _pick(f"{key_prefix}_genre", f"{key_prefix}_genres")
         if not tg_sel:
             tg_sel = _pick(f"{key_prefix}_targets", f"{key_prefix}_target", f"{key_prefix}_tg", f"{key_prefix}_selected_targets")
         if not tp_sel:
             tp_sel = _pick(f"{key_prefix}_types", f"{key_prefix}_type", f"{key_prefix}_tp", f"{key_prefix}_selected_types")
-        return int(y_from), int(y_to), tg_sel, tp_sel
+        return int(y_from), int(y_to), genre_sel, tg_sel, tp_sel
     except Exception:
-        return y_from, y_to, tg_sel, tp_sel
+        return y_from, y_to, genre_sel, tg_sel, tp_sel
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def apply_filters_basic(df: pd.DataFrame, y_from: int, y_to: int, genres: List[str], targets: List[str], types: List[str]) -> pd.DataFrame:
     use = df.copy()
     if "発行年" in use.columns:

@@ -43,7 +43,7 @@ def _build_caption(df_use: pd.DataFrame, topn: int, min_total: int, mode: str) -
     if tg:
         parts.append(f"対象物：{tg}")
     if tp:
-        parts.append(f"研究タイプ：{tp}")
+        parts.append(f"研究分野：{tp}")
     return " ｜ ".join(parts)
 
 def render_freq_block(df_use: pd.DataFrame, df_all: pd.DataFrame | None = None) -> None:

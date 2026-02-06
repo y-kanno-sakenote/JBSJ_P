@@ -25,12 +25,12 @@ except Exception:
     except Exception:
         _rfb = None  # type: ignore
 
-def _selected_filters(prefix: str = "kw") -> tuple[list[str], list[str]]:
+def _selected_filters(prefix: str = "kw") -> tuple[list[str], list[str], list[str]]:
     """
-    Try to recover current selections for 対象物 / 研究タイプ from:
+    Try to recover current selections for ジャンル / 対象物 / 研究分野 from:
       1) _LAST_FILTER_META (preferred)
       2) st.session_state (fallback; prefix-aware)
-    Returns (targets, types). Empty lists when nothing explicit is selected.
+    Returns (genres, targets, types). Empty lists when nothing explicit is selected.
     """
     def _as_list(x):
         if x is None: return []
@@ -41,12 +41,16 @@ def _selected_filters(prefix: str = "kw") -> tuple[list[str], list[str]]:
             return [s.strip() for s in _re.split(r"[,;；、，/／|｜\s\u3000]+", x) if s.strip()]
         return []
 
+    genres: list[str] = []
     targets: list[str] = []
     types: list[str] = []
 
     # 1) From meta
     try:
         meta = _LAST_FILTER_META or {}
+        for k in ["genre", "genres", f"{prefix}_genre", f"{prefix}_genres"]:
+            if k in meta and not genres:
+                genres = _as_list(meta.get(k))
         for k in [
             "targets","targets_sel","selected_targets","targets_labels",
             f"{prefix}_targets", f"{prefix}_targets_sel", f"{prefix}_selected_targets",
@@ -65,23 +69,27 @@ def _selected_filters(prefix: str = "kw") -> tuple[list[str], list[str]]:
         pass
 
     # 2) Fallback from session_state
-    if not targets or not types:
-        try:
-            ss = st.session_state
-            if not targets:
-                for k in [f"{prefix}_targets", f"{prefix}_対象物", f"{prefix}_tg", f"{prefix}_selected_targets", "targets", "対象物"]:
-                    if k in ss:
-                        vals = _as_list(ss.get(k)); 
-                        if vals: targets = vals; break
-            if not types:
-                for k in [f"{prefix}_types", f"{prefix}_研究分野", f"{prefix}_tp", f"{prefix}_selected_types", "types", "研究分野"]:
-                    if k in ss:
-                        vals = _as_list(ss.get(k)); 
-                        if vals: types = vals; break
-        except Exception:
-            pass
+    try:
+        ss = st.session_state
+        if not genres:
+            for k in [f"{prefix}_genre", f"{prefix}_genres", "genre", "genres"]:
+                if k in ss:
+                    vals = _as_list(ss.get(k))
+                    if vals: genres = vals; break
+        if not targets:
+            for k in [f"{prefix}_targets", f"{prefix}_対象物", f"{prefix}_tg", f"{prefix}_selected_targets", "targets", "対象物"]:
+                if k in ss:
+                    vals = _as_list(ss.get(k)); 
+                    if vals: targets = vals; break
+        if not types:
+            for k in [f"{prefix}_types", f"{prefix}_研究分野", f"{prefix}_tp", f"{prefix}_selected_types", "types", "研究分野"]:
+                if k in ss:
+                    vals = _as_list(ss.get(k)); 
+                    if vals: types = vals; break
+    except Exception:
+        pass
 
-    return targets, types
+    return genres, targets, types
 
 def _df_from_result(res, fallback_df: pd.DataFrame) -> pd.DataFrame:
     if isinstance(res, pd.DataFrame): return res
@@ -125,15 +133,15 @@ def _fmt_list(name: str, vals: list[str] | None, max_items: int = 6):
     return f"{name}：{txt}"
 
 def render_provenance_banner_from_df(df_use: pd.DataFrame, total_n: int, y_from: int|None=None, y_to: int|None=None,
-                                     tg_sel: list[str] | None=None, tp_sel: list[str] | None=None) -> None:
+                                     genre_sel: list[str] | None=None, tg_sel: list[str] | None=None, tp_sel: list[str] | None=None) -> None:
     try:
-        # Auto-fill target/type when caller didn't pass them
-        if not tg_sel and not tp_sel:
-            _tg_auto, _tp_auto = _selected_filters(prefix="kw")
-            if not tg_sel:
-                tg_sel = _tg_auto
-            if not tp_sel:
-                tp_sel = _tp_auto
+        # Auto-fill when caller didn't pass them
+        if not genre_sel and not tg_sel and not tp_sel:
+            _g_auto, _tg_auto, _tp_auto = _selected_filters(prefix="kw")
+            if not genre_sel: genre_sel = _g_auto
+            if not tg_sel:    tg_sel = _tg_auto
+            if not tp_sel:    tp_sel = _tp_auto
+        
         n_filtered = len(df_use) if df_use is not None else 0
         if y_from is not None and y_to is not None:
             period = f"{int(y_from)}–{int(y_to)}"
@@ -141,8 +149,20 @@ def render_provenance_banner_from_df(df_use: pd.DataFrame, total_n: int, y_from:
             years = pd.to_numeric(df_use.get("発行年", pd.Series(dtype="object")), errors="coerce").dropna().astype(int) \
                     if (df_use is not None and "発行年" in df_use.columns) else pd.Series([], dtype=int)
             period = "—" if years.empty else f"{int(years.min())}–{int(years.max())}"
+        
         parts = [f"出典：JBSJ DB（N={n_filtered} / {total_n}）", f"期間：{period}"]
-        t1 = _fmt_list("対象物", tg_sel); t2 = _fmt_list("研究分野", tp_sel)
+        
+        def _get_txt(name: str, vals: list[str] | None, max_items: int = 6):
+            if not vals: return None
+            vs = [str(x) for x in vals if str(x).strip()]
+            if not vs: return None
+            txt = ", ".join(vs[:max_items]) + (" …" if len(vs) > max_items else "")
+            return f"{name}：{txt}"
+
+        g1 = _get_txt("ジャンル", genre_sel)
+        t1 = _get_txt("対象物", tg_sel)
+        t2 = _get_txt("研究分野", tp_sel)
+        if g1: parts.append(g1)
         if t1: parts.append(t1)
         if t2: parts.append(t2)
         st.caption(" ｜ ".join(parts))

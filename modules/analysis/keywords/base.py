@@ -50,7 +50,7 @@ def _split_simple(s: str) -> list[str]:
 
 def get_banner_filters(prefix: str = "kw") -> tuple[int|None, int|None, list[str], list[str]]:
     """
-    共通フィルターUIで選択された『年レンジ／対象物／研究タイプ』を取得して返す。
+    共通フィルターUIで選択された『年レンジ／対象物／研究分野』を取得して返す。
     return: (y_from, y_to, targets, types)
     """
     # 年レンジ（スライダー値）
@@ -62,7 +62,7 @@ def get_banner_filters(prefix: str = "kw") -> tuple[int|None, int|None, list[str
         except Exception:
             y_from = y_to = None
 
-    # 対象物・研究タイプ（セッションに入っている代表キーを拾う）
+    # 対象物・研究分野（セッションに入っている代表キーを拾う）
     cand_targets = [f"{prefix}_tg", f"{prefix}_targets", f"{prefix}_対象物", f"{prefix}_selected_targets"]
     cand_types   = [f"{prefix}_tp", f"{prefix}_types",   f"{prefix}_研究タイプ", f"{prefix}_selected_types"]
 
@@ -79,3 +79,9 @@ def get_banner_filters(prefix: str = "kw") -> tuple[int|None, int|None, list[str
     tg_sel = pick(cand_targets)
     tp_sel = pick(cand_types)
     return y_from, y_to, tg_sel, tp_sel
+
+def prefer_title_column(df: pd.DataFrame) -> str | None:
+    for c in ["タイトル", "論文タイトル", "title", "Title", "題名"]:
+        if c in df.columns:
+            return c
+    return None

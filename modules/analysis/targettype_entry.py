@@ -1,7 +1,7 @@
 # modules/analysis/targettype_entry.py
 # -*- coding: utf-8 -*-
 """
-ターゲットタイプ（対象物・研究タイプ）タブのエントリーポイント。
+ターゲットタイプ（対象物・研究分野）タブのエントリーポイント。
 モジュール分割版（modules/analysis/targettype/）から安全にインポートして公開します。
 """
 from __future__ import annotations

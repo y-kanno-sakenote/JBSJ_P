@@ -23,7 +23,7 @@ def render_provenance(df_use: pd.DataFrame, total_n: int, gf: GlobalFilters):
         st.caption(f"出典：JBSJ DB（N={len(df_use) if df_use is not None else 0} / {total_n}）")
 
 def summarize(gf: GlobalFilters) -> str:
-    """条件サマリー文字列（期間・ジャンル・対象物・研究タイプ）"""
+    """条件サマリー文字列（期間・ジャンル・対象物・研究分野）"""
     parts = [f"期間：{gf.year_from}–{gf.year_to}"]
     if hasattr(gf, "genre_sel") and gf.genre_sel:
         head = ", ".join(gf.genre_sel[:3]) + (" …" if len(gf.genre_sel) > 3 else "")
