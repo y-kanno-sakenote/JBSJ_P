@@ -33,6 +33,9 @@ def render_trend_block(df: pd.DataFrame, y_from: int, y_to: int, genre_sel: list
             trend_axis = st.selectbox("分析軸", options, index=1, key="obj_trend_axis") # Default to Target L1
             target_mode_label = trend_axis
             
+            with c4:
+                metric = st.radio("指標", ["件数", "比率 (%)"], index=0, horizontal=True, key="obj_trend_metric")
+
             if trend_axis == "ジャンル":
                 # product_L0_top3 は | 区切りだが split_multi で処理される yearly_counts を利用
                 raw = yearly_counts(df, "product_L0_top3")
@@ -59,6 +62,10 @@ def render_trend_block(df: pd.DataFrame, y_from: int, y_to: int, genre_sel: list
                 format_func=lambda x: "対象物" if x == "対象物_top3" else ("研究分野" if x == "研究タイプ_top3" else str(x))
             )
             target_mode_label = "対象物" if target_mode == "対象物_top3" else "研究分野"
+            
+            with c4:
+                metric = st.radio("指標", ["件数", "比率 (%)"], index=0, horizontal=True, key="obj_trend_metric_legacy")
+
             raw = yearly_counts(df, target_mode)
             if not raw.empty:
                 yearly = raw.rename(columns={target_mode: "item"})
@@ -113,23 +120,33 @@ def render_trend_block(df: pd.DataFrame, y_from: int, y_to: int, genre_sel: list
         st.info("表示対象がありません。リストから1つ以上選んでください。")
         return
 
+    if metric.startswith("比率"):
+        # 各年ごとの総件数を取得して比率を計算
+        # yearly には軸に含まれる全アイテムのカウントが入っている
+        yearly_total = yearly.groupby("発行年")["count"].sum().replace(0, 1)
+        piv = (piv.T / yearly_total).T * 100.0
+
     if ma > 1:
         piv = piv.rolling(window=int(ma), min_periods=1).mean()
 
     _sel_key = ",".join(sel) if sel else "__ALL__"
-    _uniq_key = f"obj_trend_plot|{target_mode_label}|{_sel_key}|ma{ma}"
+    _metric_key = "ratio" if metric.startswith("比率") else "count"
+    _uniq_key = f"obj_trend_plot|{target_mode_label}|{_sel_key}|ma{ma}|{_metric_key}"
 
     if HAS_PX:
         # Plotly Express Line Chart
-        plot_df = piv.reset_index().melt(id_vars="発行年", var_name="項目", value_name="件数")
-        fig = px.line(plot_df, x="発行年", y="件数", color="項目", markers=True)
+        y_label = "比率 (%)" if metric.startswith("比率") else "件数"
+        plot_df = piv.reset_index().melt(id_vars="発行年", var_name="項目", value_name=y_label)
+        fig = px.line(plot_df, x="発行年", y=y_label, color="項目", markers=True)
+        if metric.startswith("比率"):
+            fig.update_yaxes(ticksuffix="%", rangemode="tozero")
         fig.update_layout(height=520, margin=dict(l=10, r=10, t=30, b=10))
         st.plotly_chart(fig, use_container_width=True, key=_uniq_key)
     else:
         st.line_chart(piv, key=_uniq_key)
 
     _shown_n = piv.shape[1]
-    st.caption("条件：" + f"分析軸：{target_mode_label} ｜ 表示項目数：{_shown_n} ｜ 移動平均：{int(ma)}年 ｜ " + summary_global_filters(y_from, y_to, genre_sel, tg_sel, tp_sel))
+    st.caption("条件：" + f"分析軸：{target_mode_label} ｜ 指標：{metric} ｜ 表示項目数：{_shown_n} ｜ 移動平均：{int(ma)}年 ｜ " + summary_global_filters(y_from, y_to, genre_sel, tg_sel, tp_sel))
 
     # 5. データダウンロード
     with st.expander("📊 表データを表示（トレンド）", expanded=False):
