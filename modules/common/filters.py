@@ -10,6 +10,33 @@ import re
 import pandas as pd
 import streamlit as st
 
+# ========= 表記ゆれ補正用辞書 =========
+L2_NORMALIZATION_MAP = {
+    "2-5. 微微生物生態学・衛生微生物学": "2-5. 微生物生態学・衛生微生物学",
+    "3-3. 経時的な物質変換・安定性科学": "3-3. 経時的物質変換・安定性科学",
+    "3-3. 経時性物質変換・安定性科学": "3-3. 経時的物質変換・安定性科学",
+    "3-3. 経時적物質変換・安定性科学": "3-3. 経時的物質変換・安定性科学",
+    "5-2. 地域ブランド戦略・地理制表示論": "5-2. 地域ブランド戦略・地理的表示論",
+    "5-4. 戦略적マーケティング・消費者分析": "5-4. 戦略的マーケティング・消費者分析",
+    "7-3. 環境負荷低減技術 / 水質浄化工学": "7-3. 環境負荷低減技術・水質浄化工学",
+    
+    # 8-3系の表記ゆれ
+    "8-3. 学術 political 俯瞰・知見の統合解析": "8-3. 学術的俯瞰・知見の統合解析",
+    "8-3. 学術 school的俯瞰・知見の統合解析": "8-3. 学術的俯瞰・知見の統合解析",
+    "8-3. 学術?俯瞰・知見の統合解析": "8-3. 学術的俯瞰・知見の統合解析",
+    "8-3. 学術向俯瞰・知見の統合解析": "8-3. 学術的俯瞰・知見の統合解析",
+    "8-3. 学術得俯瞰・知見の統合解析": "8-3. 学術的俯瞰・知見の統合解析",
+    "8-3. 学術的俯瞰・知見 de 統合解析": "8-3. 学術的俯瞰・知見の統合解析",
+    "8-3. 学術的俯瞰・知見 hits の統合解析": "8-3. 学術的俯瞰・知見の統合解析",
+    "8-3. 学術的俯瞰・知見 of 統合解析": "8-3. 学術的俯瞰・知見の統合解析",
+    "8-3. 学術的俯瞰・知見의 統合解析": "8-3. 学術的俯瞰・知見の統合解析",
+    "8-3. 学術적俯瞰・知見の統合解析": "8-3. 学術的俯瞰・知見の統合解析",
+}
+
+def normalize_taxonomy_name(name: str) -> str:
+    if not name: return ""
+    return L2_NORMALIZATION_MAP.get(name, name)
+
 # ========= 並び順（temporal.py と統一） & 補助ソート関数 =========
 TARGET_ORDER = [
     "清酒","ビール","ワイン","焼酎","アルコール飲料","発酵乳・乳製品",
@@ -62,15 +89,26 @@ def parse_taxonomy_pairs(s):
         if not p: continue
         if "::" in p:
             parts = p.split("::", 1)
-            res.append((parts[0].strip(), parts[1].strip()))
+            l1 = normalize_taxonomy_name(parts[0].strip())
+            l2 = normalize_taxonomy_name(parts[1].strip())
+            
+            # 誤ってL2側に「3. 分析化学...」が入っている場合は無効化
+            if "3. 分析化学" in l2:
+                l2 = ""
+            if "3. 分析化学" in l1:
+                pass # L1としては正常
+                
+            res.append((l1, l2))
         else:
             # :: がない場合、ハイフンの有無でL1/L2を簡易判定
             # L1: "1. " など, L2: "1-1. " など
             prefix = p.split(".")[0]
-            if "-" in prefix:
-                res.append(("", p)) # L2として扱う
+            val = normalize_taxonomy_name(p)
+            
+            if "-" in prefix and "3. 分析化学" not in val:
+                res.append(("", val)) # L2として扱う
             else:
-                res.append((p, "")) # L1として扱う
+                res.append((val, "")) # L1として扱う
     return res
 
 def apply_hierarchical_filters(df, genre_sel=None, l1_sel=None, l2_sel=None):
