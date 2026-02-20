@@ -52,23 +52,24 @@ def year_min_max(df: pd.DataFrame) -> Tuple[int, int]:
 
 from modules.common.filters import apply_hierarchical_filters, parse_taxonomy_pairs
 
-def apply_filters(df: pd.DataFrame, y_from: int, y_to: int, genre_sel: List[str], targets: List[str], types: List[str]) -> pd.DataFrame:
+def apply_filters(df: pd.DataFrame, y_from: int, y_to: int, genre_sel: List[str], l1_sel: List[str], l2_sel: List[str]) -> pd.DataFrame:
     use = df.copy()
     if "発行年" in use.columns:
         y = pd.to_numeric(use["発行年"], errors="coerce")
         use = use[(y >= y_from) & (y <= y_to) | y.isna()]
     
     # 新しいタクソナミー列がある場合は hierarchical フィルタを適用
-    has_wider = all(c in use.columns for c in ["product_L0_top3", "target_pairs_top5", "research_pairs_top5"])
+    has_wider = all(c in use.columns for c in ["product_L0_top3", "assigned_pairs"])
     
     if has_wider:
-        use = apply_hierarchical_filters(use, genre_sel=genre_sel, t_l1_sel=targets, t_l2_sel=targets, r_l1_sel=types, r_l2_sel=types)
+        # l1_sel, l2_sel をそのまま流用
+        use = apply_hierarchical_filters(use, genre_sel=genre_sel, l1_sel=l1_sel, l2_sel=l2_sel)
     else:
-        # フォールバック（ジャンルは新タクソナミー依存のためここでは省略または最小限の実装）
-        if targets and "対象物_top3" in use.columns:
-            use = use[col_contains_any(use["対象物_top3"], targets)]
-        if types and "研究タイプ_top3" in use.columns:
-            use = use[col_contains_any(use["研究タイプ_top3"], types)]
+        # フォールバック
+        if l1_sel and "対象物_top3" in use.columns:
+            use = use[col_contains_any(use["対象物_top3"], l1_sel)]
+        if l2_sel and "研究タイプ_top3" in use.columns:
+            use = use[col_contains_any(use["研究タイプ_top3"], l2_sel)]
     return use
 
 def node_options_for_mode(df_use: pd.DataFrame, mode: str) -> list[str]:

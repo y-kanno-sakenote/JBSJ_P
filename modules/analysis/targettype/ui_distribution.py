@@ -33,11 +33,11 @@ def _px_sunburst(df_sb: pd.DataFrame, path: list[str], val_col: str, title: str)
     except Exception:
         return None
 
-def render_distribution_block(df: pd.DataFrame, y_from: int, y_to: int, genre_sel: list[str], tg_sel: list[str], tp_sel: list[str]) -> None:
+def render_distribution_block(df: pd.DataFrame, y_from: int, y_to: int, genre_sel: list[str], l1_sel: list[str], l2_sel: list[str]) -> None:
     st.markdown("<style>.subttl{font-size:0.95rem; opacity:0.75; margin:0 0 0.25rem;}</style>", unsafe_allow_html=True)
-    st.caption("条件：" + summary_global_filters(y_from, y_to, genre_sel, tg_sel, tp_sel))
+    st.caption("条件：" + summary_global_filters(y_from, y_to, genre_sel, l1_sel, l2_sel))
 
-    has_wider = "target_pairs_top5" in df.columns and "research_pairs_top5" in df.columns
+    has_wider = "assigned_pairs" in df.columns
 
     # --- 1. ジャンル分布 (もしあれば) ---
     if "product_L0_top3" in df.columns:
@@ -54,58 +54,41 @@ def render_distribution_block(df: pd.DataFrame, y_from: int, y_to: int, genre_se
     if has_wider:
         # --- 新タクソナミー: サンバースト & L1分布 ---
         
-        # 集計実行
-        t_data = count_hierarchy(df, "target_pairs_top5")
-        r_data = count_hierarchy(df, "research_pairs_top5")
+        # 集計実行 (compute.py の count_hierarchy は assigned_pairs に対応済み)
+        data = count_hierarchy(df, "assigned_pairs")
 
-        t_sb = t_data.get("sunburst", pd.DataFrame())
-        r_sb = r_data.get("sunburst", pd.DataFrame())
+        sb = data.get("sunburst", pd.DataFrame())
+        l1 = data.get("l1", pd.DataFrame())
+        l2 = data.get("l2", pd.DataFrame())
         
-        t_l1 = t_data.get("l1", pd.DataFrame())
-        r_l1 = r_data.get("l1", pd.DataFrame())
+        st.markdown("#### ▼ 研究分野・専門領域 (Field & Domain)")
         
         # 表示エリア
         c1, c2 = st.columns(2)
         
         with c1:
-            st.markdown("#### ▼ 対象領域 (Target)")
-            if not t_sb.empty:
+            if not sb.empty:
                 st.markdown("**階層構造 (L1 → L2)**")
-                fig_t_sb = _px_sunburst(t_sb, ["L1", "L2"], "count", "対象領域の階層分布")
-                if fig_t_sb: st.plotly_chart(fig_t_sb, use_container_width=True)
-                
-                st.markdown("**L1（大分類）構成比**")
-                fig_t_l1 = _px_bar(t_l1, "L1", "count", "対象領域(L1) 上位", color_col="L1")
-                if fig_t_l1: st.plotly_chart(fig_t_l1, use_container_width=True)
+                fig_sb = _px_sunburst(sb, ["L1", "L2"], "count", "タクソナミーの階層分布")
+                if fig_sb: st.plotly_chart(fig_sb, use_container_width=True)
             else:
                 st.info("データがありません")
 
         with c2:
-            st.markdown("#### ▼ 研究分野")
-            if not r_sb.empty:
-                st.markdown("**階層構造 (L1 → L2)**")
-                fig_r_sb = _px_sunburst(r_sb, ["L1", "L2"], "count", "研究分野の階層分布")
-                if fig_r_sb: st.plotly_chart(fig_r_sb, use_container_width=True)
-                
-                st.markdown("**L1（大分類）構成比**")
-                fig_r_l1 = _px_bar(r_l1, "L1", "count", "研究分野(L1) 上位", color_col="L1")
-                if fig_r_l1: st.plotly_chart(fig_r_l1, use_container_width=True)
-            else:
-                st.info("データがありません")
+            if not l1.empty:
+                st.markdown("**L1（研究分野）構成比**")
+                fig_l1 = _px_bar(l1, "L1", "count", "研究分野(L1) 上位", color_col="L1")
+                if fig_l1: st.plotly_chart(fig_l1, use_container_width=True)
         
         # データダウンロード用 Expander
         with st.expander("📋 詳細データテーブルを表示"):
             ec1, ec2 = st.columns(2)
             with ec1:
-                st.write("対象領域 (L1)")
-                st.dataframe(t_l1, hide_index=True)
-                st.write("対象物 (L2)")
-                st.dataframe(t_data.get("l2", pd.DataFrame()), hide_index=True)
-            with ec2:
                 st.write("研究分野 (L1)")
-                st.dataframe(r_l1, hide_index=True)
-                st.write("具体的なテーマ (L2)")
-                st.dataframe(r_data.get("l2", pd.DataFrame()), hide_index=True)
+                st.dataframe(l1, hide_index=True)
+            with ec2:
+                st.write("専門領域 (L2)")
+                st.dataframe(l2, hide_index=True)
 
     else:
         # --- 旧来のロジック (フォールバック) ---

@@ -3,7 +3,7 @@ import pandas as pd
 import streamlit as st
 from .base import norm_key, short_preview, PALETTE, get_banner_filters
 from .compute import build_keyword_cooccur_edges, keyword_tfidf
-from .network import compute_node_communities_from_edges, draw_pyvis_from_edges
+from .network import compute_node_communities_from_edges, draw_pyvis_from_edges, compute_network_metrics, run_permutation_test
 from .copyui import expander as copy_expander
 
 def render_cooccur_block(df_use: pd.DataFrame, df_all: pd.DataFrame | None = None) -> None:
@@ -154,10 +154,37 @@ def render_cooccur_block(df_use: pd.DataFrame, df_all: pd.DataFrame | None = Non
     nodes = sorted(set(df_edges["src"].astype(str)).union(set(df_edges["dst"].astype(str)))) if not df_edges.empty else []
     copy_expander("📋 ノード名をすぐコピー", nodes)
 
+    # ネットワーク構造の解析指標（折りたたみ形式）
+    if not edges.empty:
+        with st.expander("📊 ネットワーク構造の解析指標", expanded=False):
+            metrics = compute_network_metrics(edges)
+            if metrics:
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Density (密度)", f"{metrics.get('density', 0.0):.4f}", help="分野間の結合強度")
+                with col2:
+                    st.metric("Modularity (モジュラリティ)", f"{metrics.get('modularity', 0.0):.4f}", help="専門分化の強さ")
+                with col3:
+                    st.metric("Avg Clustering (平均クラスリング)", f"{metrics.get('avg_clustering', 0.0):.4f}", help="局所的まとまり")
+                
+                bc = metrics.get("betweenness", {})
+                if bc:
+                    st.markdown("**Betweenness Centrality (ハブ分野 Top 5)**")
+                    bc_items = list(bc.items())[:5]
+                    bc_text = " ／ ".join([f"{k} ({v:.3f})" for k, v in bc_items])
+                    st.caption(bc_text)
+            else:
+                st.info("指標を算出できませんでした。")
+
     with st.expander("🕸️ ネットワークを可視化", expanded=False):
-        freeze_layout = st.checkbox("レイアウトを固定", value=True, key="kw_co_freeze")
+        c_vis1, c_vis2 = st.columns([1, 1])
+        with c_vis1:
+            freeze_layout = st.checkbox("レイアウトを固定", value=True, key="kw_co_freeze")
+        with c_vis2:
+            font_size = st.slider("ラベルフォントサイズ", min_value=10, max_value=40, value=20, step=1, key="kw_co_font_size")
+        
         if st.button("🌐 描画する", key="kw_co_draw"):
-            draw_pyvis_from_edges(edges, height_px=680, freeze_layout=freeze_layout)
+            draw_pyvis_from_edges(edges, height_px=680, freeze_layout=freeze_layout, font_size=font_size)
             # ネットワーク図の直下にも同じ条件サマリーを表示
             _inc_pv = short_preview(include_list, 3)
             _exc_pv = short_preview(exclude_list, 3)
@@ -178,6 +205,44 @@ def render_cooccur_block(df_use: pd.DataFrame, df_all: pd.DataFrame | None = Non
             if tp_preview:
                 _parts_draw.append(f"研究分野：{tp_preview}")
             st.caption(" ｜ ".join(_parts_draw))
+
+    # 有意性検定 (Permutation Test)
+    if df_all is not None:
+        with st.expander("⚖️ ネットワーク指標の有意性検定 (vs ランダムモデル)", expanded=False):
+            st.info("現在の検索条件のネットワーク指標が、偶然によるものか（ランダムモデルとの比較）を評価します。\\nランダムモデルは、各論文のキーワード数を維持したままキーワードをシャッフルして生成されます。")
+            
+            n_perms = st.slider("試行回数 (Permutations)", min_value=10, max_value=1000, value=100, step=10, key="perm_n_perms", help="回数が多いほど正確ですが、計算に時間がかかります。100回〜推奨。")
+            
+            if st.button("🚀 ランダムモデル検定を実行", key="perm_run"):
+                if df_use is None or df_use.empty:
+                    st.error("現在の条件で論文が見つかりません。")
+                else:
+                    st.write(f"対象論文数: {len(df_use)}件")
+                    results = run_permutation_test(df_use, n_perms=n_perms, min_edge=int(min_edge), top_n=int(topN))
+                    
+                    # 結果をテーブル表示
+                    p_vals = results["p_values"]
+                    obs = results["obs"]
+                    r_means = results["random_means"]
+                    
+                    data = []
+                    for k, label in [("density", "Density"), ("modularity", "Modularity"), ("avg_clustering", "Avg Clustering")]:
+                        v_obs = obs.get(k, 0.0)
+                        v_rand = r_means.get(k, 0.0)
+                        diff = v_obs - v_rand
+                        p = p_vals.get(k, 1.0)
+                        sig = "★" if p < 0.05 else ""
+                        data.append({
+                            "指標": label,
+                            "観測値 (実データ)": f"{v_obs:.4f}",
+                            "ランダム平均": f"{v_rand:.4f}",
+                            "差": f"{diff:+.4f}",
+                            "p-value": f"{p:.3f}" if p >= 0.001 else "< 0.001",
+                            "有意": sig
+                        })
+                    
+                    st.table(pd.DataFrame(data))
+                    st.caption("※ p-value < 0.05 を統計的に有意（★）とみなします。（両側検定）")
 
 def _attach_example_titles(df_src: pd.DataFrame, edges: pd.DataFrame, max_titles: int = 3) -> pd.DataFrame:
     from .compute import prefer_title_column

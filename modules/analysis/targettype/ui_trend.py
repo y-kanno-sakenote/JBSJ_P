@@ -11,11 +11,12 @@ except Exception:
     HAS_PX = False
 
 from .compute import yearly_counts, yearly_counts_hierarchical
+from .compute import yearly_counts, yearly_counts_hierarchical, compute_chi2_and_residuals, HAS_SCIPY
 from .base import TARGET_ORDER, TYPE_ORDER, split_multi
 from .filters import summary_global_filters
 
-def render_trend_block(df: pd.DataFrame, y_from: int, y_to: int, genre_sel: list[str], tg_sel: list[str], tp_sel: list[str]) -> None:
-    has_wider = "target_pairs_top5" in df.columns and "research_pairs_top5" in df.columns
+def render_trend_block(df: pd.DataFrame, y_from: int, y_to: int, genre_sel: list[str], l1_sel: list[str], l2_sel: list[str]) -> None:
+    has_wider = "assigned_pairs" in df.columns
     
     # 1. 分析軸の選択
     c1, c2, c3, c4 = st.columns([2.0, 1.6, 6.1, 1.5])
@@ -26,31 +27,25 @@ def render_trend_block(df: pd.DataFrame, y_from: int, y_to: int, genre_sel: list
 
     with c1:
         if has_wider:
-            options = ["ジャンル", "対象領域 (L1)", "対象物 (L2)", "研究分野", "具体的なテーマ"]
+            options = ["ジャンル", "研究分野 (L1)", "専門領域 (L2)"]
             if "product_L0_top3" not in df.columns:
                 options = [o for o in options if o != "ジャンル"]
             
-            trend_axis = st.selectbox("分析軸", options, index=1, key="obj_trend_axis") # Default to Target L1
+            trend_axis = st.selectbox("分析軸", options, index=1, key="obj_trend_axis")
             target_mode_label = trend_axis
             
             with c4:
                 metric = st.radio("指標", ["件数", "比率 (%)"], index=0, horizontal=True, key="obj_trend_metric")
 
             if trend_axis == "ジャンル":
-                # product_L0_top3 は | 区切りだが split_multi で処理される yearly_counts を利用
                 raw = yearly_counts(df, "product_L0_top3")
-                # yearly_counts returns [発行年, col_name, count]
                 if not raw.empty:
                     yearly = raw.rename(columns={"product_L0_top3": "item"})
             
-            elif trend_axis == "対象領域 (L1)":
-                yearly = yearly_counts_hierarchical(df, "target_pairs_top5", "L1")
-            elif trend_axis == "対象物 (L2)":
-                yearly = yearly_counts_hierarchical(df, "target_pairs_top5", "L2")
-            elif trend_axis == "研究分野":
-                yearly = yearly_counts_hierarchical(df, "research_pairs_top5", "L1")
-            elif trend_axis == "具体的なテーマ":
-                yearly = yearly_counts_hierarchical(df, "research_pairs_top5", "L2")
+            elif trend_axis == "研究分野 (L1)":
+                yearly = yearly_counts_hierarchical(df, "assigned_pairs", "L1")
+            elif trend_axis == "専門領域 (L2)":
+                yearly = yearly_counts_hierarchical(df, "assigned_pairs", "L2")
                 
         else:
             # Legacy fallback
@@ -146,7 +141,7 @@ def render_trend_block(df: pd.DataFrame, y_from: int, y_to: int, genre_sel: list
         st.line_chart(piv, key=_uniq_key)
 
     _shown_n = piv.shape[1]
-    st.caption("条件：" + f"分析軸：{target_mode_label} ｜ 指標：{metric} ｜ 表示項目数：{_shown_n} ｜ 移動平均：{int(ma)}年 ｜ " + summary_global_filters(y_from, y_to, genre_sel, tg_sel, tp_sel))
+    st.caption("条件：" + f"分析軸：{target_mode_label} ｜ 指標：{metric} ｜ 表示項目数：{_shown_n} ｜ 移動平均：{int(ma)}年             " + summary_global_filters(y_from, y_to, genre_sel, l1_sel, l2_sel))
 
     # 5. データダウンロード
     with st.expander("📊 表データを表示（トレンド）", expanded=False):
@@ -168,3 +163,95 @@ def render_trend_block(df: pd.DataFrame, y_from: int, y_to: int, genre_sel: list
         except Exception as _e:
             st.caption(f"表の表示に失敗しました: {_e!s}")
 
+    # 6. カイ二乗検定と残差分析
+    with st.expander("⚖️ 時期別の偏り検定（カイ二乗検定・残差分析）", expanded=False):
+        st.write("時期（初期・中期・後期など）と分類カテゴリの間に偏りがあるか（どの時期にどの分野が多い/少ないか）を検定します。")
+        
+        c_p1, c_p2, c_p3 = st.columns(3)
+        with c_p1:
+            p1_name = st.text_input("第1期 名前", value="初期", key="chi2_p1_name")
+            p1_start = st.number_input("開始年", value=1980, max_value=2050, key="chi2_p1_start")
+            p1_end = st.number_input("終了年", value=1999, max_value=2050, key="chi2_p1_end")
+        with c_p2:
+            p2_name = st.text_input("第2期 名前", value="中期", key="chi2_p2_name")
+            p2_start = st.number_input("開始年", value=2000, max_value=2050, key="chi2_p2_start")
+            p2_end = st.number_input("終了年", value=2010, max_value=2050, key="chi2_p2_end")
+        with c_p3:
+            p3_name = st.text_input("第3期 名前", value="後期", key="chi2_p3_name")
+            p3_start = st.number_input("開始年", value=2011, max_value=2050, key="chi2_p3_start")
+            p3_end = st.number_input("終了年", value=2024, max_value=2050, key="chi2_p3_end")
+            
+        col_check1, col_check2 = st.columns(2)
+        with col_check1:
+            use_p3 = st.checkbox("第3期を使用する", value=True, key="chi2_use_p3")
+        with col_check2:
+            use_bonferroni = st.checkbox("Bonferroni補正を適用", value=True, help="セル数（比較回数）が多い場合の多重比較問題を補正し、より厳密に評価します。")
+        
+        if st.button("🚀 検定を実行", key="chi2_run"):
+            periods = []
+            if p1_name: periods.append((p1_name, int(p1_start), int(p1_end)))
+            if p2_name: periods.append((p2_name, int(p2_start), int(p2_end)))
+            if use_p3 and p3_name: periods.append((p3_name, int(p3_start), int(p3_end)))
+            
+            if len(periods) < 2:
+                st.error("比較するには2つ以上の期間が必要です。")
+            else:
+                target_col = "assigned_pairs" if has_wider else ("研究タイプ_top3" if target_mode_label == "研究分野" else "対象物_top3")
+                level = "L1"
+                if target_mode_label == "ジャンル":
+                    target_col = "product_L0_top3"
+                elif target_mode_label == "専門領域 (L2)" or target_mode_label == "対象物":
+                    level = "L2"
+                    
+                res = compute_chi2_and_residuals(df, periods=periods, target_col=target_col, level=level)
+                
+                if "error" in res:
+                    st.error(res["error"])
+                elif not res:
+                    st.warning("検定に必要なデータが不足しています。")
+                else:
+                    st.markdown(f"**カイ二乗検定の結果** (対象: {target_mode_label})")
+                    p_val = res['p_value']
+                    chi2 = res['chi2']
+                    sig = "★ 有意な偏りがあります" if p_val < 0.05 else "有意な偏りは認められません"
+                    st.write(f"p-value: **{p_val:.4e}** ({sig}) / χ² = {chi2:.2f} (df={res['dof']})")
+                    
+                    if p_val < 0.05:
+                        st.markdown("**調整済み残差 (Adjusted Residuals)**")
+                        
+                        adj_res = res["adj_residuals"]
+                        num_cells = adj_res.size
+                        
+                        import scipy.stats as st_stats
+                        if use_bonferroni and HAS_SCIPY:
+                            alpha_adj = 0.05 / num_cells
+                            threshold = abs(st_stats.norm.ppf(alpha_adj / 2))
+                            st.caption(f"※ Bonferroni補正適用（α' = 0.05 / {num_cells} = {alpha_adj:.5f}）: **±{threshold:.2f}以上**で有意と判定")
+                        else:
+                            threshold = 1.96
+                            st.caption("※ 補正なし（α = 0.05）: **±1.96以上**で有意と判定")
+                        
+                        st.caption("赤色はポジティブ（期待値より有意に多い）、青色はネガティブ（期待値より有意に少ない）を示します。")
+                        
+                        def highlight_residuals(val):
+                            if pd.isna(val): return ''
+                            if val >= threshold: return 'background-color: rgba(255, 99, 132, 0.4); font-weight: bold;'
+                            if val <= -threshold: return 'background-color: rgba(54, 162, 235, 0.4); font-weight: bold;'
+                            return ''
+                            
+                        st.dataframe(adj_res.style.map(highlight_residuals).format("{:.2f}"))
+                        
+                        # サマリーテキスト
+                        st.markdown(f"**時期別の特徴（絶対値が {threshold:.2f} 以上の分野）**")
+                        for p_name in adj_res.index:
+                            row = adj_res.loc[p_name]
+                            increased = row[row >= threshold].index.tolist()
+                            decreased = row[row <= -threshold].index.tolist()
+                            
+                            inc_text = f"↗️ **特化（多）**: {', '.join(increased)}" if increased else ""
+                            dec_text = f"↘️ **過小（少）**: {', '.join(decreased)}" if decreased else ""
+                            
+                            if inc_text or dec_text:
+                                st.write(f"- **{p_name}**: {' / '.join(filter(None, [inc_text, dec_text]))}")
+                            else:
+                                st.write(f"- **{p_name}**: 特筆すべき増減なし")

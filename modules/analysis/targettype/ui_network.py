@@ -118,17 +118,17 @@ def _get_l2_nodes(df: pd.DataFrame, col: str) -> list[str]:
             if p[1]: nodes.add(p[1])
     return sorted(list(nodes))
 
-def render_cooccurrence_block(df_use: pd.DataFrame, y_from: int, y_to: int, genre_sel: list[str], tg_sel: list[str], tp_sel: list[str]) -> None:
-    has_wider = "target_pairs_top5" in df_use.columns and "research_pairs_top5" in df_use.columns
+def render_cooccurrence_block(df_use: pd.DataFrame, y_from: int, y_to: int, genre_sel: list[str], l1_sel: list[str], l2_sel: list[str]) -> None:
+    has_wider = "assigned_pairs" in df_use.columns
     
     c1, c2, c3, c4, c5 = st.columns([1.5, 1.2, 1.0, 1.6, 1.6])
     
     mode_map = {}
     if has_wider:
         mode_map = {
-            "対象物(L2)のみ": "Target L2 Only",
-            "研究分野(L2)のみ": "Research L2 Only",
-            "対象物(L2)×具体的なテーマ(L2)": "Target L2 x Research L2"
+            "専門領域(L2)同士": "L2 Only",
+            "研究分野(L1)同士": "L1 Only",
+            "研究分野(L1)×専門領域(L2)": "L1 x L2"
         }
     else:
         # Legacy
@@ -145,13 +145,20 @@ def render_cooccurrence_block(df_use: pd.DataFrame, y_from: int, y_to: int, genr
     # ノード候補の取得
     node_options = []
     if has_wider:
-        if mode_val == "Target L2 Only":
-            node_options = _get_l2_nodes(df_use, "target_pairs_top5")
-        elif mode_val == "Research L2 Only":
-            node_options = _get_l2_nodes(df_use, "research_pairs_top5")
+        def _get_nodes(df, idx):
+            nodes = set()
+            for v in df["assigned_pairs"].fillna(""):
+                for p in parse_taxonomy_pairs(v):
+                    if p[idx]: nodes.add(p[idx])
+            return sorted(list(nodes))
+
+        if mode_val == "L2 Only":
+            node_options = _get_nodes(df_use, 1)
+        elif mode_val == "L1 Only":
+            node_options = _get_nodes(df_use, 0)
         else:
-            n1 = _get_l2_nodes(df_use, "target_pairs_top5")
-            n2 = _get_l2_nodes(df_use, "research_pairs_top5")
+            n1 = _get_nodes(df_use, 0)
+            n2 = _get_nodes(df_use, 1)
             node_options = sorted(list(set(n1 + n2)))
     else:
         node_options = node_options_for_mode(df_use, mode_val)
@@ -223,7 +230,7 @@ def render_cooccurrence_block(df_use: pd.DataFrame, y_from: int, y_to: int, genr
             
             if matches:
                 titles = df_titles.loc[list(matches)[:3], title_col].tolist()
-                ex_titles.append(" / ".join(titles))
+                ex_titles.append(" / ".join(map(str, titles)))
             else:
                 ex_titles.append("")
         else:
@@ -232,7 +239,7 @@ def render_cooccurrence_block(df_use: pd.DataFrame, y_from: int, y_to: int, genr
                 titles = example_titles_for_edge_hierarchical(df_use, mode_val, a, b, limit=3)
             else:
                 titles = example_titles_for_edge(df_use, mode_val, a, b, limit=3)
-            ex_titles.append(" / ".join(titles))
+            ex_titles.append(" / ".join(map(str, titles)))
 
     edges = edges.copy()
     edges["cluster_id"] = edge_clusters
@@ -245,7 +252,7 @@ def render_cooccurrence_block(df_use: pd.DataFrame, y_from: int, y_to: int, genr
              + f"ネットワーク：{mode_label} ｜ 表示するノード数：{int(topN)} ｜ 最低共起数≧{int(min_edge)} ｜ "
              + (f"必須：{len(include_terms)}件 ｜ " if include_terms else "必須：0件 ｜ ")
              + (f"除外：{len(exclude_terms)}件 ｜ " if exclude_terms else "除外：0件 ｜ ")
-             + summary_global_filters(y_from, y_to, genre_sel, tg_sel, tp_sel))
+             + summary_global_filters(y_from, y_to, genre_sel, l1_sel, l2_sel))
 
     if mode_val in ("対象物のみ", "Target L2 Only"):
         col_a, col_b = "対象物A", "対象物B"
@@ -286,7 +293,7 @@ def render_cooccurrence_block(df_use: pd.DataFrame, y_from: int, y_to: int, genr
                          + f"ネットワーク：{mode_label} ｜ 表示するノード数：{int(topN)} ｜ 最低共起数≧{int(min_edge)} ｜ "
                          + (f"必須：{len(include_terms)}件 ｜ " if include_terms else "必須：0件 ｜ ")
                          + (f"除外：{len(exclude_terms)}件 ｜ " if exclude_terms else "除外：0件 ｜ ")
-                         + summary_global_filters(y_from, y_to, genre_sel, tg_sel, tp_sel))
+                         + summary_global_filters(y_from, y_to, genre_sel, l1_sel, l2_sel))
                 _draw_pyvis_from_edges(edges, height_px=680, fixed_layout=fix_layout, node_colors=node_colors, footer_caption=_foot)
         else:
             st.info("networkx / pyvis が未導入のため、表のみ表示しています。")

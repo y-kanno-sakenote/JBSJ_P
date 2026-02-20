@@ -124,9 +124,9 @@ def augment_with_session_state(y_from: int, y_to: int, genre_sel: list[str], tg_
         if not genre_sel:
             genre_sel = _pick(f"{key_prefix}_genre", f"{key_prefix}_genres")
         if not tg_sel:
-            tg_sel = _pick(f"{key_prefix}_targets", f"{key_prefix}_target", f"{key_prefix}_tg", f"{key_prefix}_selected_targets")
+            tg_sel = _pick(f"{key_prefix}_l1", f"{key_prefix}_target_l1", f"{key_prefix}_t_l1", f"{key_prefix}_selected_l1")
         if not tp_sel:
-            tp_sel = _pick(f"{key_prefix}_types", f"{key_prefix}_type", f"{key_prefix}_tp", f"{key_prefix}_selected_types")
+            tp_sel = _pick(f"{key_prefix}_l2", f"{key_prefix}_target_l2", f"{key_prefix}_t_l2", f"{key_prefix}_selected_l2")
         return int(y_from), int(y_to), genre_sel, tg_sel, tp_sel
     except Exception:
         return y_from, y_to, genre_sel, tg_sel, tp_sel
@@ -137,10 +137,10 @@ def apply_filters_basic(df: pd.DataFrame, y_from: int, y_to: int, genres: List[s
     if "発行年" in use.columns:
         y = pd.to_numeric(use["発行年"], errors="coerce")
         use = use[(y >= y_from) & (y <= y_to) | y.isna()]
-    has_wider = all(c in use.columns for c in ["target_pairs_top5", "research_pairs_top5"])
+    has_wider = "assigned_pairs" in use.columns
     if has_wider:
         from modules.common.filters import apply_hierarchical_filters
-        use = apply_hierarchical_filters(use, genre_sel=genres, t_l1_sel=targets, t_l2_sel=targets, r_l1_sel=types, r_l2_sel=types)
+        use = apply_hierarchical_filters(use, genre_sel=genres, l1_sel=targets, l2_sel=types)
     else:
         if targets and "対象物_top3" in use.columns:
             use = use[col_contains_any(use["対象物_top3"], targets)]

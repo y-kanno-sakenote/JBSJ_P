@@ -19,20 +19,20 @@ def render_targettype_tab(df: pd.DataFrame) -> None:
         """,
         unsafe_allow_html=True,
     )
-    df_use, y_from, y_to, genre_sel, tg_sel, tp_sel = adapt_filter_bar_for_obj(df)
-    y_from, y_to, genre_sel, tg_sel, tp_sel = augment_with_session_state(y_from, y_to, genre_sel, tg_sel, tp_sel, key_prefix="obj")
+    df_use, y_from, y_to, genre_sel, l1_sel, l2_sel = adapt_filter_bar_for_obj(df)
+    y_from, y_to, genre_sel, l1_sel, l2_sel = augment_with_session_state(y_from, y_to, genre_sel, l1_sel, l2_sel, key_prefix="obj")
     
     # セッション状態から復元した値で再フィルタリングを確実に行う
     from .base import apply_filters
-    df_use = apply_filters(df, y_from, y_to, genre_sel, tg_sel, tp_sel)
-    render_provenance_banner_from_df(df_use, total_n=len(df), y_from=y_from, y_to=y_to, genre_sel=genre_sel, tg_sel=tg_sel, tp_sel=tp_sel)
+    df_use = apply_filters(df, y_from, y_to, genre_sel, l1_sel, l2_sel)
+    render_provenance_banner_from_df(df_use, total_n=len(df), y_from=y_from, y_to=y_to, genre_sel=genre_sel, l1_sel=l1_sel, l2_sel=l2_sel)
 
     tab1, tab2, tab3 = st.tabs(["① 構成比・クロス集計","② 共起ネットワーク","③ トレンド分析"])
     with tab1:
-        render_distribution_block(df_use, y_from, y_to, genre_sel, tg_sel, tp_sel)
+        render_distribution_block(df_use, y_from, y_to, genre_sel, l1_sel, l2_sel)
         st.divider()
-        render_cross_block(df_use, y_from, y_to, genre_sel, tg_sel, tp_sel)
+        render_cross_block(df_use, y_from, y_to, genre_sel, l1_sel, l2_sel)
     with tab2:
-        render_cooccurrence_block(df_use, y_from, y_to, genre_sel, tg_sel, tp_sel)
+        render_cooccurrence_block(df_use, y_from, y_to, genre_sel, l1_sel, l2_sel)
     with tab3:
-        render_trend_block(df_use, y_from, y_to, genre_sel, tg_sel, tp_sel)
+        render_trend_block(df_use, y_from, y_to, genre_sel, l1_sel, l2_sel)

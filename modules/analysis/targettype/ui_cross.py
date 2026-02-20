@@ -13,29 +13,29 @@ from .compute import cross_counts, cross_counts_hierarchical
 from .base import TARGET_ORDER, TYPE_ORDER
 from .filters import summary_global_filters
 
-def render_cross_block(df: pd.DataFrame, y_from: int, y_to: int, genre_sel: list[str], tg_sel: list[str], tp_sel: list[str]) -> None:
+def render_cross_block(df: pd.DataFrame, y_from: int, y_to: int, genre_sel: list[str], l1_sel: list[str], l2_sel: list[str]) -> None:
     st.markdown('<div style="font-weight=600; font-size:1.1rem; margin:0 0 0.25rem;">対象領域 × 研究分野（クロスヒートマップ）</div>', unsafe_allow_html=True)
     
-    has_wider = "target_pairs_top5" in df.columns and "research_pairs_top5" in df.columns
+    has_wider = "assigned_pairs" in df.columns
     cross = pd.DataFrame()
     x_label, y_label = "", ""
 
     if has_wider:
-        # --- 新UI: 軸の選択 ---
+        # --- 新UI: 軸のレベル選択 ---
         c_opt1, c_opt2 = st.columns(2)
         with c_opt1:
-            t_level = st.radio("縦軸（対象）の粒度", ["L1（領域）", "L2（対象物）"], horizontal=True, index=0, key="cross_t_level")
+            y_level = st.radio("縦軸の粒度", ["L1（研究分野）", "L2（専門領域）"], horizontal=True, index=0, key="cross_y_level")
         with c_opt2:
-            r_level = st.radio("横軸（分野）の粒度", ["L1（分野）", "L2（テーマ）"], horizontal=True, index=0, key="cross_r_level")
+            x_level = st.radio("横軸の粒度", ["L1（研究分野）", "L2（専門領域）"], horizontal=True, index=1, key="cross_x_level")
         
-        t_lvl_code = "L1" if "L1" in t_level else "L2"
-        r_lvl_code = "L1" if "L1" in r_level else "L2"
+        y_lvl_code = "L1" if "L1" in y_level else "L2"
+        x_lvl_code = "L1" if "L1" in x_level else "L2"
         
-        x_label = f"研究: {r_level}"
-        y_label = f"対象: {t_level}"
+        y_label = y_level
+        x_label = x_level
         
-        # 集計
-        cross = cross_counts_hierarchical(df, "target_pairs_top5", t_lvl_code, "research_pairs_top5", r_lvl_code)
+        # 集計 (assigned_pairs を想定)
+        cross = cross_counts_hierarchical(df, "assigned_pairs", y_lvl_code, "assigned_pairs", x_lvl_code)
         
     else:
         # --- 旧UI (フォールバック) ---
@@ -87,7 +87,7 @@ def render_cross_block(df: pd.DataFrame, y_from: int, y_to: int, genre_sel: list
     else:
         st.dataframe(piv, use_container_width=True)
 
-    st.caption("条件：" + summary_global_filters(y_from, y_to, genre_sel, tg_sel, tp_sel))
+    st.caption("条件：" + summary_global_filters(y_from, y_to, genre_sel, l1_sel, l2_sel))
 
     with st.expander("📋 ヒートマップ表データを表示", expanded=False):
         try:

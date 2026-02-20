@@ -382,7 +382,7 @@ st.title("醸造協会誌　論文検索 β_4.0")
 DEMO_CSV_PATH = Path("data/keywords_summary5.csv")   # メインCSV
 SUMMARY_CSV_PATH = Path("data/summaries.csv")         # ← 追加: summary
 AUTHORS_CSV_PATH = Path("data/authors_readings.csv")  # ← 追加: 著者読み
-WIDER_TAXONOMY_CSV_PATH = Path("data/paper_taxonomy_llm_wide.csv") # ← 追加: 拡張タクソナミー
+WIDER_TAXONOMY_CSV_PATH = Path("data/paper_taxonomy_v2_wide.csv") # ← 更新: 拡張タクソナミー
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_authors_readings(path: Path) -> pd.DataFrame | None:
@@ -411,7 +411,7 @@ from modules.common.filters import (
 
 @st.cache_data(ttl=3600, show_spinner="データを読み込み中...")
 def load_all_data() -> pd.DataFrame:
-    # 1. メインCSVの読み込み
+    # 1. メインCSVの読み込み (v2.2: L1 name normalization expanded)
     df = pd.read_csv(DEMO_CSV_PATH, encoding="utf-8")
     df.columns = [str(c).strip() for c in df.columns]
     
@@ -426,8 +426,49 @@ def load_all_data() -> pd.DataFrame:
     if WIDER_TAXONOMY_CSV_PATH.exists():
         df_w = pd.read_csv(WIDER_TAXONOMY_CSV_PATH, encoding="utf-8")
         df_w.columns = [str(c).strip() for c in df_w.columns]
-        keep_cols = ["file_name", "product_L0_top3", "target_pairs_top5", "research_pairs_top5"]
+        # v2 では assigned_pairs に L1/L2 が統合されている
+        keep_cols = ["file_name", "product_L0_top3", "assigned_pairs"]
         df_w = df_w[[c for c in keep_cols if c in df_w.columns]]
+        
+        # L1カテゴリ名の正規化（表記揺れ・タイポ・旧名称の統合）
+        if "assigned_pairs" in df_w.columns:
+            l1_remap = {
+                "1": "1. 醸造学・食品工学",
+                "2": "2. 応用微生物学・ゲノム工学",
+                "3": "3. 分析化学・生物有機化学",
+                "4": "4. 感性情報学・官能評価科学",
+                "5": "5. 社会経済農学・醸造文化学",
+                "6": "6. 栄養学・生体機能生理学",
+                "7": "7. 環境保全技術・食品安全管理学",
+                "8": "8. 統計科学・醸造情報学",
+            }
+            def normalize_l1(val):
+                if not val or pd.isna(val): return val
+                res = []
+                for p in str(val).split("|"):
+                    p = p.strip()
+                    if not p: continue
+                    if "::" in p:
+                        l1, l2 = p.split("::", 1)
+                        # タイポ修正と数字に基づく正規化
+                        l1_s = l1.strip().replace("官官能", "官能")
+                        m = re.match(r'^(\d)', l1_s)
+                        if m and m.group(1) in l1_remap:
+                            l1 = l1_remap[m.group(1)]
+                        else:
+                            l1 = l1_s
+                        res.append(f"{l1}::{l2.strip()}")
+                    else:
+                        p_s = p.replace("官官能", "官能")
+                        m = re.match(r'^(\d)', p_s)
+                        # L2（1-1. など）でなければL1として正規化
+                        if m and m.group(1) in l1_remap and "-" not in p_s.split('.')[0]:
+                            p_s = l1_remap[m.group(1)]
+                        res.append(p_s)
+                return "|".join(res)
+            
+            df_w["assigned_pairs"] = df_w["assigned_pairs"].apply(normalize_l1)
+
         df = df.merge(df_w, on="file_name", how="left")
 
     # 4. 不要な巨大列の削除（メモリ節約・処理高速化）
@@ -482,10 +523,8 @@ def load_all_data() -> pd.DataFrame:
 
     # 8-2. タクソナミーペア整理
     from modules.common.filters import parse_taxonomy_pairs
-    if "target_pairs_top5" in df.columns:
-        df["_target_pairs"] = df["target_pairs_top5"].apply(parse_taxonomy_pairs)
-    if "research_pairs_top5" in df.columns:
-        df["_research_pairs"] = df["research_pairs_top5"].apply(parse_taxonomy_pairs)
+    if "assigned_pairs" in df.columns:
+        df["_assigned_pairs_list"] = df["assigned_pairs"].apply(parse_taxonomy_pairs)
     
     # 8-3. 著者リスト整理
     if "著者" in df.columns:
@@ -526,39 +565,24 @@ with tab_search:
         genre_all = order_options(list(genre_all), GENRE_ORDER)
         genre_sel = st.multiselect("ジャンル", genre_all, default=[])
     
-    # 2段目：対象領域 (L1)・対象物 (L2)
-    row2_t1, row2_t2 = st.columns([1, 1])
-    target_l1_all, target_l1_to_l2 = get_taxonomy_hierarchy(df.get("target_pairs_top5", pd.Series(dtype=str)))
-    with row2_t1:
-        target_l1_sel = st.multiselect("対象領域 (L1)", target_l1_all, default=[])
+    # 2段目：研究分野 (L1)・専門領域 (L2)
+    row2_l1, row2_l2 = st.columns([1, 1])
+    l1_all, l1_to_l2 = get_taxonomy_hierarchy(df.get("assigned_pairs", pd.Series(dtype=str)))
+    with row2_l1:
+        l1_sel = st.multiselect("研究分野L1", l1_all, default=[])
     
-    with row2_t2:
-        t_l1_missing = len(target_l1_sel) == 0
-        t2_cand = sorted({l2 for l1 in target_l1_sel for l2 in target_l1_to_l2.get(l1, [])}) if not t_l1_missing else []
-        target_l2_sel = st.multiselect(
-            "対象物 (L2)", 
-            t2_cand, 
+    with row2_l2:
+        l1_missing = len(l1_sel) == 0
+        l2_cand = sorted({l2 for l1 in l1_sel for l2 in l1_to_l2.get(l1, [])}) if not l1_missing else []
+        l2_sel = st.multiselect(
+            "専門領域L2", 
+            l2_cand, 
             default=[],
-            disabled=t_l1_missing,
-            help="対象領域 (L1) を選択すると、詳細な対象物を選べるようになります。" if t_l1_missing else None
+            disabled=l1_missing,
+            help="研究分野L1を選択すると、詳細な専門領域を選べるようになります。" if l1_missing else None
         )
 
-    # 3段目：研究分野 (L1)・具体的なテーマ (L2)
-    row3_r1, row3_r2 = st.columns([1, 1])
-    research_l1_all, research_l1_to_l2 = get_taxonomy_hierarchy(df.get("research_pairs_top5", pd.Series(dtype=str)))
-    with row3_r1:
-        research_l1_sel = st.multiselect("研究分野", research_l1_all, default=[])
-
-    with row3_r2:
-        r_l1_missing = len(research_l1_sel) == 0
-        r2_cand = sorted({l2 for l1 in research_l1_sel for l2 in research_l1_to_l2.get(l1, [])}) if not r_l1_missing else []
-        research_l2_sel = st.multiselect(
-            "具体的なテーマ", 
-            r2_cand, 
-            default=[],
-            disabled=r_l1_missing,
-            help="研究分野を選択すると、具体的なテーマを選べるようになります。" if r_l1_missing else None
-        )
+    # (旧研究分野フィルタは削除、上記L1/L2に統合)
 
     # 2段目：著者・著者イニシャル選択
     col_author, col_initial = st.columns([1.5, 2])
@@ -668,11 +692,8 @@ with tab_search:
         if genre_sel and "product_L0_top3" in df2.columns:
             df2 = apply_hierarchical_filters(df2, genre_sel=genre_sel)
         
-        if (target_l1_sel or target_l2_sel) and "target_pairs_top5" in df2.columns:
-            df2 = apply_hierarchical_filters(df2, t_l1_sel=target_l1_sel, t_l2_sel=target_l2_sel)
-        
-        if (research_l1_sel or research_l2_sel) and "research_pairs_top5" in df2.columns:
-            df2 = apply_hierarchical_filters(df2, r_l1_sel=research_l1_sel, r_l2_sel=research_l2_sel)
+        if (l1_sel or l2_sel) and "assigned_pairs" in df2.columns:
+            df2 = apply_hierarchical_filters(df2, l1_sel=l1_sel, l2_sel=l2_sel)
         toks = tokens_from_query(kw_query)
         if toks:
             # 事前計算済みの _haystack を使用して高速化
@@ -735,8 +756,9 @@ with tab_search:
         filtered_n=len(filtered),
         y_from=y_from, y_to=y_to,
         authors=authors_sel or [],
-        targets=target_l1_sel + target_l2_sel,
-        types=research_l1_sel + research_l2_sel,
+        # 統合されたL1/L2を表示
+        targets=l1_sel + l2_sel,
+        types=[], # 以前の研究分野は空に
         kw_query=kw_query,
         kw_mode=kw_mode
     )
