@@ -688,7 +688,7 @@ with tab_search:
         if authors_sel and "_norm_authors" in df2.columns:
             sel = {norm_key(a) for a in authors_sel}
             # セットの積集合を利用して高速化
-            df2 = df2[df2["_norm_authors"].apply(lambda v: not v.disjoint(sel))]
+            df2 = df2[df2["_norm_authors"].apply(lambda v: not v.isdisjoint(sel))]
         if genre_sel and "product_L0_top3" in df2.columns:
             df2 = apply_hierarchical_filters(df2, genre_sel=genre_sel)
         
