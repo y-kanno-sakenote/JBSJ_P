@@ -360,7 +360,7 @@ def make_visible_cols(df: pd.DataFrame) -> list[str]:
     """df の列から『相対PASS/終了ページ/file_path/num_pages/file_name』と
        『llm_keywords 以降の全列』を非表示対象にして、表示列リストを返す。
     """
-    base_hide = {"相対PASS", "終了ページ", "file_path", "num_pages", "file_name"}
+    base_hide = {"相対PASS", "終了ページ", "file_path", "num_pages", "file_name", "PDFリンク先"}
     cols = [str(c) for c in df.columns]
     hide = set(c for c in cols if c in base_hide)
     if "llm_keywords" in cols:
@@ -794,17 +794,15 @@ with tab_search:
     if rename_map:
         disp = disp.rename(columns=rename_map)
 
-    # LinkColumn 設定（HP/PDF を短い見出しで）
+    # LinkColumn 設定（HP を短い見出しで）
     column_config = {
         "★": st.column_config.CheckboxColumn("★", help="気になる論文にチェック/解除", default=False, width="small"),
     }
     if "HPリンク先" in disp.columns:
         column_config["HPリンク先"] = st.column_config.LinkColumn("HP", help="外部サイトへ移動", display_text="HP")
-    if "PDFリンク先" in disp.columns:
-        column_config["PDFリンク先"] = st.column_config.LinkColumn("PDF", help="PDFを開く", display_text="PDF")
 
     # 列順：スクリーンショット順に合わせる
-    desired_front = ["★", "No.", "HPリンク先", "PDFリンク先", "発行年", "巻数", "号数", "p.始", "p.終"]
+    desired_front = ["★", "No.", "HPリンク先", "発行年", "巻数", "号数", "p.始", "p.終"]
     # include only those that exist in disp
     front = [c for c in desired_front if c in disp.columns]
     rest = [c for c in disp.columns if c not in set(front) and c != "_row_id"]
@@ -889,11 +887,9 @@ with tab_search:
         }
         if "HPリンク先" in fav_disp.columns:
             fav_column_config["HPリンク先"] = st.column_config.LinkColumn("HP", display_text="HP")
-        if "PDFリンク先" in fav_disp.columns:
-            fav_column_config["PDFリンク先"] = st.column_config.LinkColumn("PDF", display_text="PDF")
 
         # 列順調整：スクリーンショット順に合わせる
-        desired_front = ["★", "No.", "HPリンク先", "PDFリンク先", "発行年", "巻数", "号数", "p.始", "p.終"]
+        desired_front = ["★", "No.", "HPリンク先", "発行年", "巻数", "号数", "p.始", "p.終"]
         front = [c for c in desired_front if c in fav_disp.columns]
         rest = [c for c in fav_disp.columns if c not in set(front) and c not in {"_row_id", "tags"}]
         fav_display_order = front + rest + ["tags", "_row_id"]
@@ -953,7 +949,7 @@ with tab_search:
             return ", ".join(sorted(s)) if s else ""
         fav_disp_for_filter["tags"] = fav_disp_for_filter["_row_id"].apply(tags_str_for_filter)
 
-        show_cols = ["No.","発行年","巻数","号数","論文タイトル","著者","対象物_top3","研究分野","HPリンク先","PDFリンク先","tags"]
+        show_cols = ["No.","発行年","巻数","号数","論文タイトル","著者","対象物_top3","研究分野","HPリンク先","tags"]
         show_cols = [c for c in show_cols if c in fav_disp_for_filter.columns]
         # ensure displayed year has no comma
         if "発行年" in fav_disp_for_filter.columns:
